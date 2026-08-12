@@ -12,7 +12,7 @@ from exceptions import (
     ValidationError,
 )
 
-API_URL = "https://amcoplusapi.farmadosis.com/api"
+DEFAULT_API_URL = "https://amcoplusapi.farmadosis.com/api"
 
 def raise_for_error(response: httpx.Response) -> None:
     """Inspect a response and raise the matching Amco+ exception."""
@@ -41,13 +41,24 @@ def raise_for_error(response: httpx.Response) -> None:
 class AmcoClient:
     """Client for the Amco+ API. Handles login and token lifecycle."""
 
-    def __init__(self, login: str, password: str, code: str | None = None, timeout: float = 120.0):
-        self.login_name = login
-        self.password = password
-        self.code = code
-        self.access_token: str | None = None
-        self.expires_at: datetime | None = None
-        self.timeout = timeout
+    def __init__(
+            self,
+            login: str,
+            password: str,
+            *,
+            base_url: str = DEFAULT_API_URL,
+            code: str | None = None,
+            timeout: float = 120.0,
+            verify_ssl: bool = True,
+        ):
+            self.login_name = login
+            self.password = password
+            self.base_url = base_url.rstrip("/")
+            self.code = code
+            self.timeout = timeout
+            self.access_token: str | None = None
+            self.expires_at: datetime | None = None
+            self.verify_ssl = verify_ssl
 
     def login(self) -> dict:
         """Authenticate against Amco+ and store the token in the instance."""
@@ -57,7 +68,12 @@ class AmcoClient:
             "code": self.code,
         }
 
-        response = httpx.post(API_URL + "/login", json=login_dict)
+        response = httpx.post(
+            f"{self.base_url}/login",
+            json=login_dict,
+            verify=self.verify_ssl,
+            timeout=self.timeout,
+        )
         raise_for_error(response)
         data = response.json()
 
@@ -82,8 +98,9 @@ class AmcoClient:
 
         response = httpx.request(
             method,
-            f"{API_URL}{endpoint}",
+            f"{self.base_url}{endpoint}",
             headers=headers,
+            verify=self.verify_ssl,
             timeout=self.timeout,
             **kwargs,
         )
