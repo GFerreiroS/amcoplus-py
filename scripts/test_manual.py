@@ -2,7 +2,7 @@ import os
 
 from dotenv import load_dotenv
 
-from client import AmcoClient
+from amcoplus import AmcoClient
 
 load_dotenv()
 
