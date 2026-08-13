@@ -86,6 +86,26 @@ class Integrations(BareListResource):
             and not auth_credential.get(field["name"])
         ]
 
+    @staticmethod
+    def _body(
+        integration_provider_id: int,
+        auth_credential: Mapping[str, Any] | None,
+        type_frequency: str,
+        frequency: str,
+        at_day: int | None,
+        at_hour: int | None,
+        at_minute: int | None,
+    ) -> dict[str, Any]:
+        return {
+            "integration_provider_id": integration_provider_id,
+            "auth_credential": dict(auth_credential) if auth_credential else {},
+            "type_frequency": type_frequency,
+            "frequency": frequency,
+            "at_day": at_day,
+            "at_hour": at_hour,
+            "at_minute": at_minute,
+        }
+
     def create(
         self,
         *,
@@ -120,28 +140,54 @@ class Integrations(BareListResource):
         Returns:
             The created integration record, so you can confirm what was stored.
         """
-        body = {
-            "integration_provider_id": integration_provider_id,
-            "auth_credential": dict(auth_credential) if auth_credential else {},
-            "type_frequency": type_frequency,
-            "frequency": frequency,
-            "at_day": at_day,
-            "at_hour": at_hour,
-            "at_minute": at_minute,
-        }
+        body = self._body(
+            integration_provider_id, auth_credential, type_frequency,
+            frequency, at_day, at_hour, at_minute,
+        )
         return self._client.post(f"{self.url}/create", json=body)
 
-    def update(self, integration_id: int, **fields: Any) -> dict[str, Any]:
-        """Update one integration — `.../{integration_id}/update`.
+    def update(
+        self,
+        integration_id: int,
+        *,
+        integration_provider_id: int,
+        auth_credential: Mapping[str, Any] | None = None,
+        type_frequency: str = "manual",
+        frequency: str = "weekly",
+        at_day: int | None = None,
+        at_hour: int | None = None,
+        at_minute: int | None = None,
+    ) -> Any:
+        """Replace one integration's configuration.
 
-        Pass only the fields to change; the accepted keys are the same as
-        `create`.
+        `PUT .../integration-provider-customizations/{integration_id}/update`
+
+        This resource breaks the usual POST-to-`/update` convention: update is
+        an HTTP **PUT**, and it wants the **whole** body (the same fields as
+        `create`), not a partial one — a partial body 500s. Pass every field,
+        including the ones you are not changing.
         """
-        return self._client.post(f"{self.url}/{integration_id}/update", json=fields)
+        body = self._body(
+            integration_provider_id, auth_credential, type_frequency,
+            frequency, at_day, at_hour, at_minute,
+        )
+        return self._client.request(
+            "PUT", f"{self.url}/{integration_id}/update", json=body
+        )
 
     def delete(self, integration_id: int) -> Any:
-        """Remove one integration — `.../{integration_id}/delete`."""
-        return self._client.post(f"{self.url}/{integration_id}/delete")
+        """Deactivate one integration.
+
+        `DELETE .../integration-provider-customizations/{integration_id}/delete`
+
+        Another break from convention: delete is an HTTP **DELETE**, not a POST.
+        It is a **soft delete** — the row's `is_active` becomes `False` and it
+        stops showing in the UI, but `list()` still returns it. Amco+ exposes no
+        hard delete for integrations.
+        """
+        return self._client.request(
+            "DELETE", f"{self.url}/{integration_id}/delete"
+        )
 
 
 class Treatments(Resource):
