@@ -84,12 +84,16 @@ class Resource:
     `items_per_page` (paper rolls, translations, support access logs).
     """
 
-    default_items_per_page: int = -1
+    default_items_per_page: int | None = -1
     """Page size used when `all_items=True`.
 
     `-1` means "everything in one response", which is what we normally want and
     why the client has a generous timeout. Override it where that would be a
     bad idea — paper rolls and support access logs have ~200k rows.
+
+    `None` means "send no page-size parameter at all". A few endpoints reject
+    any pagination param with a 500 and only answer when the query string is
+    empty — the integration-provider searches are like this.
     """
 
     def __init__(self, client: "AmcoClient", base_path: str) -> None:
@@ -130,11 +134,13 @@ class Resource:
         Returns:
             `{"items": [...], "maxResults": N}`.
         """
-        params: JSONDict = {
-            self.items_per_page_param: self.default_items_per_page if all_items else 15
-        }
+        params: JSONDict = {}
+        if self.default_items_per_page is not None:
+            params[self.items_per_page_param] = (
+                self.default_items_per_page if all_items else 15
+            )
         params.update(filters)
-        return self._client.get(f"{self.url}/search", params=params)
+        return self._client.get(f"{self.url}/search", params=params or None)
 
     def get(self, resource_id: int) -> JSONDict:
         """Fetch a single item by id, from `{url}/{resource_id}`.

@@ -85,8 +85,12 @@ class IntegrationProviders(Resource):
     `Root.integration_provider_form`.
 
     Note: this endpoint's envelope counts rows in `max_results` (snake_case),
-    not the `maxResults` that `/installations/search` and friends use.
+    not the `maxResults` that `/installations/search` and friends use. And it
+    rejects any pagination param with a 500 — it only answers with an empty
+    query string — so `default_items_per_page` is `None` here.
     """
+
+    default_items_per_page = None
 
     def __init__(self, client: "AmcoClient", category: str) -> None:
         super().__init__(client, "")
