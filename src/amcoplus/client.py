@@ -16,6 +16,7 @@ from .exceptions import (
 
 if TYPE_CHECKING:
     from .resources.installation import Installation
+    from .resources.root import Root
 
 __all__ = ["DEFAULT_API_URL", "AmcoClient", "raise_for_error"]
 
@@ -202,6 +203,16 @@ class AmcoClient:
     def post(self, endpoint: str, **kwargs: Any) -> Any:
         """Authenticated POST. See `request()`."""
         return self.request("POST", endpoint, **kwargs)
+
+    @property
+    def root(self) -> "Root":
+        """Root scope — resources that belong to no installation.
+
+        No request is made; the scope is built locally.
+        """
+        from .resources.root import Root
+
+        return Root(self)
 
     def installation(self, installation_id: int) -> "Installation":
         """Return an `Installation` scope for the given id.

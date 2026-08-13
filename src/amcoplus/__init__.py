@@ -43,7 +43,7 @@ from .exceptions import (
     NotFoundError,
     ValidationError,
 )
-from .resources import BareListResource, Center, Installation, Patient, Resource
+from .resources import BareListResource, Center, Installation, Patient, Resource, Root
 
 __all__ = [
     "DEFAULT_API_URL",
@@ -57,6 +57,7 @@ __all__ = [
     "NotFoundError",
     "Patient",
     "Resource",
+    "Root",
     "ValidationError",
     "raise_for_error",
 ]
