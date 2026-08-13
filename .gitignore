@@ -4,6 +4,9 @@
 *.pem
 *.key
 
+# Endpoint-discovery output — contains real patient data
+artifacts/
+
 # Python
 __pycache__/
 *.py[cod]
