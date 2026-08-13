@@ -230,8 +230,11 @@ the caller may legitimately want to try.
 Use `warnings.warn(..., UserWarning)`, not the logger: Python shows it by default
 in a plain script without any logging setup, which is how these scripts are run.
 
-TODO: the field name in the center config that flags these as enabled is not
-known yet. Discover it with `scripts/explore_api.py` before implementing.
+The center config flags are on the center detail (`GET /installations/{i}/centers/{c}`):
+**`use_intakes_association`** (intakes) and **`use_intakes_grouping`**
+(intake-agrupations), both booleans. `use_families_for_productions` is a related
+production flag. When either intakes flag is `False`, warn before hitting the
+matching collection.
 
 ## Operations deliberately left out
 
