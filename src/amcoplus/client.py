@@ -163,7 +163,7 @@ class AmcoClient:
             return False
         return self.expires_at > datetime.now(timezone.utc)
 
-    def request(self, method: str, endpoint: str, **kwargs: Any) -> dict[str, Any]:
+    def request(self, method: str, endpoint: str, **kwargs: Any) -> Any:
         """Make an authenticated request, logging in first if needed.
 
         Args:
@@ -174,7 +174,9 @@ class AmcoClient:
             **kwargs: Passed through to httpx — typically `params=` or `json=`.
 
         Returns:
-            The decoded JSON body. Endpoints that return a file are not
+            The decoded JSON body. Usually a `dict`, but a few endpoints
+            return a bare `list` — `/installations/{id}/centers` is one — so
+            this is deliberately untyped. Endpoints that return a file are not
             supported yet.
         """
         if not self.is_token_valid():
@@ -193,11 +195,11 @@ class AmcoClient:
         raise_for_error(response)
         return response.json()
 
-    def get(self, endpoint: str, **kwargs: Any) -> dict[str, Any]:
+    def get(self, endpoint: str, **kwargs: Any) -> Any:
         """Authenticated GET. See `request()`."""
         return self.request("GET", endpoint, **kwargs)
 
-    def post(self, endpoint: str, **kwargs: Any) -> dict[str, Any]:
+    def post(self, endpoint: str, **kwargs: Any) -> Any:
         """Authenticated POST. See `request()`."""
         return self.request("POST", endpoint, **kwargs)
 
