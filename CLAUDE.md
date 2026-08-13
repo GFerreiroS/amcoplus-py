@@ -172,6 +172,11 @@ Writes are `POST` requests to a **sub-path**, not HTTP verbs on the collection:
 **Never** map these to `PUT`, `PATCH` or HTTP `DELETE`. When `Resource` grows
 `create()` / `update()` / `delete()`, they must build these paths.
 
+The rule holds almost everywhere, but it is not absolute — confirm a new write
+against the API before trusting it. `integration-provider-customizations` is the
+known exception: its update is a **PUT** and its delete an HTTP **DELETE** (see
+the center Integrations table), and POSTing either gives 405.
+
 Some writes don't follow the pattern because they are actions, not CRUD:
 `cassettes/{id}/medicines/add`, `cassettes/{id}/replenishes/add`,
 `productions/{id}/send-to-machine`, `centers/{id}/import-patients-and-treatments`.
@@ -330,7 +335,7 @@ not been confirmed against the API yet.
 | Path | Notes |
 |---|---|
 | `/machine-models/search` | `query`, `itemsPerPage=1000`. **Not** admin-only, any user sees it |
-| `/integration-providers/{category}/search` | providers a center can wire to. `category` is a path segment (see below). Envelope counts in `max_results`, **not** `maxResults`. Each item has an `auth_form` |
+| `/integration-providers/{category}/search` | providers a center can wire to. `category` is a path segment (see below). **Rejects any pagination param with a 500** — call it with an empty query string (`default_items_per_page=None`). Envelope counts in `max_results`, **not** `maxResults`. Each item has an `auth_form` |
 | `/integration-providers/{id}/integration-provider-form` | the provider's `auth_form` on its own: `[{label,name,type,options,is_required}]` |
 
 Integration-provider `category` values: `productions`, `patients-and-treatments`,
@@ -493,15 +498,21 @@ A center's configured integrations are the resource
 `integration-provider-customizations`. **Bare JSON list** (no `/search`, no
 envelope), like centers. The providers themselves are root-level (above).
 
-| Path | Notes |
-|---|---|
-| `/installations/{i}/centers/{c}/integration-provider-customizations` | GET, bare list |
-| `/installations/{i}/centers/{c}/integration-provider-customizations/{id}` | single |
-| `/installations/{i}/centers/{c}/integration-provider-customizations/create` | body: `{integration_provider_id, auth_credential:{...}, type_frequency:"manual", frequency:"weekly", at_day, at_hour, at_minute}` |
-| `/installations/{i}/centers/{c}/integration-provider-customizations/{id}/update` | |
-| `/installations/{i}/centers/{c}/integration-provider-customizations/{id}/delete` | |
+| Path | Method | Notes |
+|---|---|---|
+| `.../integration-provider-customizations` | GET | bare list, **includes soft-deleted (`is_active=false`) rows** |
+| `.../integration-provider-customizations/{id}` | GET | single |
+| `.../integration-provider-customizations/create` | POST | → 201. body: `{integration_provider_id, auth_credential:{...}, type_frequency:"manual", frequency:"weekly", at_day, at_hour, at_minute}` |
+| `.../integration-provider-customizations/{id}/update` | **PUT** | → 202, **whole body** (same fields as create; a partial one 500s) |
+| `.../integration-provider-customizations/{id}/delete` | **DELETE** | → 204, **soft delete** (sets `is_active=false`; row stays in the list) |
+
+**This resource breaks the "writes are POST to a sub-path" rule.** Update is a
+PUT and delete is an HTTP DELETE — POSTing either gives 405. Both return no body
+(202/204), which is why `request()` returns `None` on empty content. There is no
+hard delete.
 
 `auth_credential` keys come from the chosen provider's `auth_form` (`name`s).
+The library never validates it: `create`/`update` send whatever they are given.
 
 **Dead routes — the SPA calls these but they 404 (54002). Do not implement:**
 `.../center-integrations`, `.../production-integrations`, `.../integrations`.
