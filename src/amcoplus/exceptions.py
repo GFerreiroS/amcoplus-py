@@ -37,15 +37,3 @@ class ValidationError(AmcoError):
 
 class APIError(AmcoError):
     """Unclassified API error — used until we identify the specific error_code."""
-
-data = {
-    "error_code": 9001,
-    "error_message": "Credenciales invalidas",
-    "details": None,
-    "log_correlation_id": "d17637ce-21c3-41c8-af74-6f6ef0e4b4f5",
-}
-
-try:
-    raise AuthenticationError.from_response(data)
-except AmcoError as e:
-    print(e)
