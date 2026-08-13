@@ -177,8 +177,9 @@ class AmcoClient:
         Returns:
             The decoded JSON body. Usually a `dict`, but a few endpoints
             return a bare `list` — `/installations/{id}/centers` is one — so
-            this is deliberately untyped. Endpoints that return a file are not
-            supported yet.
+            this is deliberately untyped. A no-content response (HTTP 202/204,
+            as the integration update and delete return) gives `None`.
+            Endpoints that return a file are not supported yet.
         """
         if not self.is_token_valid():
             self.login()
@@ -194,6 +195,8 @@ class AmcoClient:
             **kwargs,
         )
         raise_for_error(response)
+        if not response.content:
+            return None
         return response.json()
 
     def get(self, endpoint: str, **kwargs: Any) -> Any:
