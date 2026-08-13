@@ -41,6 +41,21 @@ API_GLOB = "**/api/**"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 MAX_REQUESTS_PER_SECOND = 20.0
 
+AUTH_PATHS = ("/login", "/refresh-token")
+"""The only non-GET requests allowed through.
+
+Authentication is a POST, so blocking every write indiscriminately means you
+can never log in. These endpoints change no pharmacy data — they hand out a
+token — so letting them past does not weaken the guarantee that matters.
+"""
+
+
+def is_write(method: str, path: str) -> bool:
+    """Whether this request would modify data, and must therefore be blocked."""
+    if method in SAFE_METHODS:
+        return False
+    return not path.endswith(AUTH_PATHS)
+
 
 class Throttle:
     """Cap how fast requests reach the API.
@@ -136,7 +151,7 @@ def make_handler(recorder: Recorder, throttle: Throttle):
             "query": {k: v for k, v in parse_qs(url.query, keep_blank_values=True).items()},
         }
 
-        if request.method not in SAFE_METHODS:
+        if is_write(request.method, url.path):
             # Capture the body, then make sure the request never leaves.
             body = request.post_data
             if body:
@@ -147,19 +162,25 @@ def make_handler(recorder: Recorder, throttle: Throttle):
             entry["blocked"] = True
             recorder.blocked += 1
             recorder.write(entry)
-            print(f"  BLOCKED {request.method} {url.path}")
+            print(f"  BLOCKED {request.method} {url.path}", flush=True)
             route.abort("failed")
             return
 
         entry["blocked"] = False
+        is_auth = url.path.endswith(AUTH_PATHS)
         try:
             throttle.wait()  # only requests that actually leave are rate limited
             response = route.fetch()
             entry["status"] = response.status
-            try:
-                entry["response_schema"] = schema_of(response.json())
-            except Exception:
-                entry["response_schema"] = "<non-json>"
+            if is_auth:
+                # Never touch the login exchange: the request carries the
+                # password and the response carries the access token.
+                entry["auth"] = True
+            else:
+                try:
+                    entry["response_schema"] = schema_of(response.json())
+                except Exception:
+                    entry["response_schema"] = "<non-json>"
             route.fulfill(response=response)
         except Exception as exc:  # network hiccup, aborted navigation...
             entry["error"] = str(exc)[:200]
@@ -170,7 +191,7 @@ def make_handler(recorder: Recorder, throttle: Throttle):
 
         recorder.observed += 1
         recorder.write(entry)
-        print(f"  {request.method} {url.path}")
+        print(f"  {request.method} {url.path}", flush=True)
 
     return handle
 
