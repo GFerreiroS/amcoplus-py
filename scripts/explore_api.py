@@ -23,7 +23,9 @@ import json
 import os
 import re
 import sys
-from collections import defaultdict
+import threading
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -37,6 +39,42 @@ REPORT_FILE = ARTIFACTS / "endpoints-report.md"
 
 API_GLOB = "**/api/**"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+MAX_REQUESTS_PER_SECOND = 20.0
+
+
+class Throttle:
+    """Cap how fast requests reach the API.
+
+    A single screen of the SPA can fan out into a burst of parallel calls, so
+    this holds them back. The guarantee is a sliding window: no more than
+    `max_per_second` requests in **any** one-second interval.
+
+    Spacing requests evenly instead would not be equivalent — 20 requests a
+    second apart by 1/20s still puts 21 of them inside some one-second window.
+    """
+
+    WINDOW = 1.0
+
+    def __init__(self, max_per_second: float) -> None:
+        self._max = max(1, int(max_per_second))
+        self._lock = threading.Lock()
+        self._sent: deque[float] = deque()
+        self.delayed = 0
+
+    def wait(self) -> None:
+        with self._lock:
+            while True:
+                now = time.monotonic()
+                while self._sent and now - self._sent[0] >= self.WINDOW:
+                    self._sent.popleft()
+
+                if len(self._sent) < self._max:
+                    self._sent.append(now)
+                    return
+
+                # Window is full: sleep until its oldest entry falls out.
+                self.delayed += 1
+                time.sleep(max(self.WINDOW - (now - self._sent[0]), 0.001))
 
 
 # --- recording -------------------------------------------------------------
@@ -85,7 +123,7 @@ class Recorder:
         self._file.close()
 
 
-def make_handler(recorder: Recorder):
+def make_handler(recorder: Recorder, throttle: Throttle):
     """Build the route handler that records traffic and blocks every write."""
 
     def handle(route: Route) -> None:
@@ -115,6 +153,7 @@ def make_handler(recorder: Recorder):
 
         entry["blocked"] = False
         try:
+            throttle.wait()  # only requests that actually leave are rate limited
             response = route.fetch()
             entry["status"] = response.status
             try:
@@ -158,8 +197,8 @@ def try_login(page, login: str, password: str) -> bool:
     return False
 
 
-def explore() -> None:
-    load_dotenv()
+def explore(rate: float = MAX_REQUESTS_PER_SECOND) -> None:
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     web_url = os.environ.get("AMCO_WEB_URL")
     if not web_url:
         sys.exit("AMCO_WEB_URL is not set. Add the test environment URL to .env")
@@ -169,13 +208,18 @@ def explore() -> None:
 
     ARTIFACTS.mkdir(exist_ok=True)
     recorder = Recorder(TRAFFIC_FILE)
+    throttle = Throttle(rate)
+
+    print(f"Target: {web_url}")
+    print(f"Rate limit: {rate:g} requests/second")
+    print(f"Recording to: {TRAFFIC_FILE}\n")
 
     with sync_playwright() as playwright:
         # channel="chrome" reuses the Chrome already installed on this machine.
         browser = playwright.chromium.launch(headless=False, channel="chrome")
-        context = browser.new_context()
+        context = browser.new_context(viewport={"width": 1600, "height": 950})
         page = context.new_page()
-        page.route(API_GLOB, make_handler(recorder))
+        page.route(API_GLOB, make_handler(recorder, throttle))
 
         page.goto(web_url)
         if login and password and try_login(page, login, password):
@@ -186,20 +230,30 @@ def explore() -> None:
         print(
             "\nRecording. Navigate the UI; open create/edit forms and save them —\n"
             "the body is captured and the request is blocked before it is sent.\n"
-            "Press Enter here when you are done.\n"
+            "Close the browser window when you are done.\n"
         )
+
+        # Stay alive until the window is closed, so this can run unattended in
+        # the background while someone drives the browser.
+        finished = threading.Event()
+        page.on("close", lambda _: finished.set())
+        browser.on("disconnected", lambda _: finished.set())
         try:
-            input()
-        except (EOFError, KeyboardInterrupt):
+            while not finished.is_set():
+                page.wait_for_timeout(500)
+        except (KeyboardInterrupt, Exception):
             pass
 
-        page.screenshot(path=str(ARTIFACTS / "last-screen.png"))
-        context.close()
-        browser.close()
+        try:
+            context.close()
+            browser.close()
+        except Exception:
+            pass
 
     recorder.close()
     print(
-        f"\n{recorder.observed} reads recorded, {recorder.blocked} writes blocked."
+        f"\n{recorder.observed} reads recorded, {recorder.blocked} writes blocked, "
+        f"{throttle.delayed} throttled."
         f"\nTraffic: {TRAFFIC_FILE}"
     )
 
@@ -250,5 +304,11 @@ def report() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", action="store_true", help="summarise recorded traffic")
+    parser.add_argument(
+        "--rate",
+        type=float,
+        default=MAX_REQUESTS_PER_SECOND,
+        help=f"max requests per second (default {MAX_REQUESTS_PER_SECOND:g})",
+    )
     args = parser.parse_args()
-    report() if args.report else explore()
+    report() if args.report else explore(args.rate)
