@@ -123,14 +123,3 @@ class AmcoClient:
         params = {"itemsPerPage": -1}
         params.update(filters)
         return self.get("/installations/search", params=params)["items"]
-
-try:
-    client = AmcoClient("gferreiro@farmadosis.com", "Farmadosis3")
-    data = client.get("/installations/search", params={
-        "page": 1,
-        "itemsPerPage": 5,
-        "is_active": True,
-    })
-    print(data)
-except AuthenticationError as e:
-    print("Login falló:", e.error_code, e.error_message)
