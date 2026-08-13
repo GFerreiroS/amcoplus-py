@@ -147,6 +147,7 @@ status. Known so far:
 | 9001 | 422 | Invalid credentials |
 | 1001 | 404 | The installation does not exist |
 | 2014 | 404 | A path segment had the wrong type, e.g. `centers/search` read as an id |
+| 53002 | 422 | Request-DTO validation failed — a required query param is missing or the wrong type. Seen when a `/search` endpoint's `items_per_page` (int) is left null |
 | 54002 | 404 | Route does not exist — `Not Found on GET <url>` |
 
 Other codes are discovered as they appear — add a branch to `raise_for_error()`
