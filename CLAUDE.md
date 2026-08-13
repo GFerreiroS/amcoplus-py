@@ -123,15 +123,40 @@ plus resource-specific filters. Sorting params (`sortBy[]`, `sortDesc[]`,
 
 **Single item:** `{resource}/{id}`, no `/search`.
 
+**Not every collection paginates.** `/installations/{i}/centers` returns a bare
+JSON list with no `/search` and no envelope — asking for `/centers/search`
+fails with `error_code` 2014, because `search` is parsed as a center id. So
+`Resource` does not fit centers, and `AmcoClient.request()` is annotated `Any`
+rather than `dict`. Confirm the response shape of a new endpoint before
+assuming the envelope.
+
+**Unknown query params are ignored, not rejected.** A mistyped filter gives
+unfiltered results and no error. This is why each `Resource` subclass documents
+the filters its endpoint actually accepts.
+
 **Error envelope:**
 ```json
 {"error_code": 9001, "error_message": "Credenciales invalidas",
  "details": null, "server_number": "2", "log_correlation_id": "d176..."}
 ```
 `error_code` is Amco+'s own numeric code and is more reliable than the HTTP
-status. Known so far: **9001 = invalid credentials** (returned with HTTP 422).
+status. Known so far:
+
+| `error_code` | HTTP | Meaning |
+|---|---|---|
+| 9001 | 422 | Invalid credentials |
+| 1001 | 404 | The installation does not exist |
+| 2014 | 404 | A path segment had the wrong type, e.g. `centers/search` read as an id |
+| 54002 | 404 | Route does not exist — `Not Found on GET <url>` |
+
 Other codes are discovered as they appear — add a branch to `raise_for_error()`
 and document it here.
+
+**A missing row does not reliably give a 404.** Requesting a cassette id that
+does not exist returns **HTTP 500 with an HTML body**, which comes out of
+`raise_for_error()` as `APIError("Non-JSON error response (HTTP 500)")`, not
+`NotFoundError`. Only bad *scope* ids (installation, center) give a real 404
+with an envelope. Never promise callers a `NotFoundError` for a missing item.
 
 ## Write operations: Amco+ is not verb-REST
 
@@ -437,6 +462,8 @@ Low priority — the production module is huge and will barely be used.
 
 | Path | Notes |
 |---|---|
+| `/installations/{i}/centers` | **bare JSON list**, no `/search`, no envelope. Confirmed |
+| `/installations/{i}/centers/{c}` | center detail. Confirmed |
 | `/installations/{i}/centers/{c}/update` | |
 | `/installations/{i}/centers/{c}/import-patients-and-treatments` | action |
 | `/installations/{i}/centers/{c}/patients/search` | implemented |
