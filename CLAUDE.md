@@ -41,7 +41,7 @@ src/amcoplus/
 └── resources/
     ├── __init__.py
     ├── base.py           # Resource: generic list()/search()/get()
-    ├── root.py           # Root scope (planned) — resources with no installation
+    ├── root.py           # Root scope — resources with no installation
     ├── installation.py   # Installation scope + pharmacy-level resources
     └── center.py         # Center and Patient scopes + their resources
 scripts/
@@ -286,6 +286,8 @@ client.installation(i)                     -> /installations/{i}
 
 ```
 client.root
+  integration_providers(category)          -> /integration-providers/{category}/search
+  integration_provider_form(provider_id)
   paper_rolls, paper_roll_uploads, translations, all_dictionaries,
   licenses, machine_models
   support_access_logs                      (super-admin only)
@@ -305,7 +307,7 @@ client.installation(i)
                        send_to_machine(), set_status()
   .center(c)
      patients, doctors, modules, intakes, intake_agrupations,
-     imported_medicines
+     imported_medicines, integrations
      update(), import_patients_and_treatments()
      .module(m)     -> submodules
      .patient(p)    -> treatments
@@ -328,6 +330,13 @@ not been confirmed against the API yet.
 | Path | Notes |
 |---|---|
 | `/machine-models/search` | `query`, `itemsPerPage=1000`. **Not** admin-only, any user sees it |
+| `/integration-providers/{category}/search` | providers a center can wire to. `category` is a path segment (see below). Envelope counts in `max_results`, **not** `maxResults`. Each item has an `auth_form` |
+| `/integration-providers/{id}/integration-provider-form` | the provider's `auth_form` on its own: `[{label,name,type,options,is_required}]` |
+
+Integration-provider `category` values: `productions`, `patients-and-treatments`,
+`medicines`, `order-delivery-clients`, `delivery-order-consumptions`,
+`login-authentications`, `control-dose-take-administrations`, `sales`, `counters`,
+`cassettes`. The first nine are the sections of a center's INTEGRATIONS tab.
 | `/paper-rolls/search` | snake_case `items_per_page=10`, `page`. ~200k rows |
 | `/paper-rolls/{id}` | e.g. `200261` |
 | `/paper-rolls/find-by-uuid` | exact uuid or 404 |
@@ -478,6 +487,25 @@ Low priority — the production module is huge and will barely be used.
 | `/installations/{i}/centers/{c}/doctors/{d}` | |
 | `/installations/{i}/centers/{c}/doctors/create` | |
 
+### Integrations (the INTEGRATIONS tab)
+
+A center's configured integrations are the resource
+`integration-provider-customizations`. **Bare JSON list** (no `/search`, no
+envelope), like centers. The providers themselves are root-level (above).
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/centers/{c}/integration-provider-customizations` | GET, bare list |
+| `/installations/{i}/centers/{c}/integration-provider-customizations/{id}` | single |
+| `/installations/{i}/centers/{c}/integration-provider-customizations/create` | body: `{integration_provider_id, auth_credential:{...}, type_frequency:"manual", frequency:"weekly", at_day, at_hour, at_minute}` |
+| `/installations/{i}/centers/{c}/integration-provider-customizations/{id}/update` | |
+| `/installations/{i}/centers/{c}/integration-provider-customizations/{id}/delete` | |
+
+`auth_credential` keys come from the chosen provider's `auth_form` (`name`s).
+
+**Dead routes — the SPA calls these but they 404 (54002). Do not implement:**
+`.../center-integrations`, `.../production-integrations`, `.../integrations`.
+
 ### Modules and submodules
 
 | Path | Notes |
@@ -575,7 +603,9 @@ writing a commit message with "and" in it.
 
 Working: exception hierarchy, `raise_for_error()`, `AmcoClient` (login, token
 storage, expiry check, authenticated `request()`/`get()`/`post()`), resource
-scopes for installation / center / patient, installable package.
+scopes for installation / center / patient, installable package. `Root` scope
+with integration providers. `BareListResource` for envelope-less collections.
+Center integrations (`center.integrations`, with `create`/`update`/`delete`).
 
 Not done yet:
 - **Write operations.** `create()` / `update()` / `delete()` on `Resource`,
@@ -583,8 +613,9 @@ Not done yet:
   methods (`add`, `send-to-machine`, `import-patients-and-treatments`).
 - **Non-JSON responses and file uploads.** `request()` always calls `.json()`;
   downloads and `multipart` CSV/TXT uploads need a path around it.
-- **`Root` scope** (`resources/root.py`) for paper rolls, dictionaries, licenses,
-  translations, machine models and support access logs.
+- **`Root` scope** (`resources/root.py`) exists but only wires integration
+  providers; still to add: paper rolls, dictionaries, licenses, translations,
+  machine models, support access logs.
 - **Configurable pagination.** `items_per_page_param` and
   `default_items_per_page` as `Resource` class attributes.
 - **`Installation.centers`** collection (only `center(id)` exists today).
