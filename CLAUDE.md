@@ -22,9 +22,11 @@ installation (the pharmacy)
 ```
 
 - **Installation-level resources** belong to the pharmacy: cassettes, machines,
-  layouts, trays, warehouses, label designs.
+  layouts, trays, warehouses, label designs, fill stations, users, medicines.
 - **Center-level resources** belong to the residence: patients (and below them,
-  treatments).
+  treatments), doctors, modules, intakes.
+- **Root-level resources** belong to no installation at all: paper rolls,
+  dictionaries, licenses, translations, machine models.
 
 A typical script targets **one installation** but iterates **several centers**
 within it — e.g. updating a field on every patient of a whole installation.
@@ -39,10 +41,12 @@ src/amcoplus/
 └── resources/
     ├── __init__.py
     ├── base.py           # Resource: generic list()/search()/get()
+    ├── root.py           # Root scope (planned) — resources with no installation
     ├── installation.py   # Installation scope + pharmacy-level resources
     └── center.py         # Center and Patient scopes + their resources
 scripts/
-└── test_manual.py        # integration script hitting the real API
+├── test_manual.py        # integration script hitting the real API
+└── explore_api.py        # Playwright endpoint-discovery session (dev only)
 ```
 
 ### Layering
@@ -96,7 +100,9 @@ adding resources.
 **Circular imports** between `installation.py` and `center.py` are handled with
 function-local imports and `TYPE_CHECKING` blocks. This is intentional.
 
-## API conventions
+---
+
+# API conventions
 
 Base URL: `https://amcoplusapi.farmadosis.com/api` (cloud default).
 
@@ -111,24 +117,11 @@ Always compare expiry against `datetime.now(timezone.utc)` — never naive
 `datetime.now()`, which would be local (Europe/Madrid) and silently wrong.
 
 **List endpoints** follow `{resource}/search` and return
-`{"items": [...], "maxResults": N}`. Query params: `page`, `itemsPerPage`
-(`-1` returns everything), plus resource-specific filters like `is_active`.
-Sorting params (`sortDesc[]`, `mustSort`, `multiSort`) are optional and unused.
-
-`itemsPerPage=-1` is the preferred approach — the API handles large responses
-well. Because those requests can be slow, `AmcoClient` has a generous default
-`timeout` (httpx defaults to 5s, which is too low here).
+`{"items": [...], "maxResults": N}`. Query params: `page`, `itemsPerPage`,
+plus resource-specific filters. Sorting params (`sortBy[]`, `sortDesc[]`,
+`mustSort`, `multiSort`) are optional and unused.
 
 **Single item:** `{resource}/{id}`, no `/search`.
-
-Example paths:
-```
-/installations/search
-/installations/5/cassettes/search
-/installations/5/centers/8/patients/search
-/installations/5/centers/8/patients/3955/treatments/search
-/installations/5/centers/8/patients/3955/treatments/2725144
-```
 
 **Error envelope:**
 ```json
@@ -140,12 +133,352 @@ status. Known so far: **9001 = invalid credentials** (returned with HTTP 422).
 Other codes are discovered as they appear — add a branch to `raise_for_error()`
 and document it here.
 
-## Adding a resource
+## Write operations: Amco+ is not verb-REST
+
+Writes are `POST` requests to a **sub-path**, not HTTP verbs on the collection:
+
+| Operation | Path | HTTP method |
+|---|---|---|
+| create | `{resource}/create` | POST |
+| update | `{resource}/{id}/update` | POST |
+| delete | `{resource}/{id}/delete` | POST |
+
+**Never** map these to `PUT`, `PATCH` or HTTP `DELETE`. When `Resource` grows
+`create()` / `update()` / `delete()`, they must build these paths.
+
+Some writes don't follow the pattern because they are actions, not CRUD:
+`cassettes/{id}/medicines/add`, `cassettes/{id}/replenishes/add`,
+`productions/{id}/send-to-machine`, `centers/{id}/import-patients-and-treatments`.
+Those get their own named methods on the relevant scope, not `Resource` generics.
+
+## Pagination and its traps
+
+`itemsPerPage=-1` (everything in one response) is the default we want, and the
+generous `AmcoClient` timeout exists because of it. But it is **not** universal:
+
+**Two spellings of the same parameter.** Most endpoints use camelCase
+`itemsPerPage`; a few use snake_case `items_per_page`:
+`/paper-rolls/search`, `/translations/search`, `/support-access-logs`.
+`/paper-roll-uploads/search` has been observed sending *both* — verify which one
+it honours.
+
+So `Resource` needs two overridable class attributes:
+
+```python
+class Resource:
+    items_per_page_param: str = "itemsPerPage"
+    default_items_per_page: int = -1
+```
+
+**Resources where `-1` is wrong:**
+
+| Resource | Default | Why |
+|---|---|---|
+| `paper_rolls` | 10 | ~200k rows |
+| `support_access_logs` | 50 (hard cap 200) | ~200k rows, **never** `-1` |
+| `machine_models` | 1000 | enough to see them all |
+| `medicines_families` | -1 | correct default, but very slow — warn the caller |
+
+## Endpoints that are not JSON
+
+`AmcoClient.request()` currently always calls `response.json()`. These endpoints
+need raw bytes or `multipart` uploads, so the client needs a way to bypass that:
+
+- **Downloads:** `machines/{id}/certificate` (a JSON *file*),
+  `cassettes/export-to-atms`.
+- **Uploads:** `cassettes/import-from-atms` (TXT),
+  `paper-rolls/import-csv-file` (CSV),
+  `all-dictionaries/{id}/medicines/import-csv-file` (CSV),
+  `all-dictionaries/{id}/medicine-families/import-csv-file` (CSV).
+- **Email side effect, downloads nothing:**
+  `all-dictionaries/{id}/medicines/export-csv-file`,
+  `all-dictionaries/{id}/medicine-families/export-csv-file`.
+  Do not treat their response as the exported data.
+
+## Guarded resources: intakes and intake-agrupations
+
+`centers/{c}/intakes` and `centers/{c}/intake-agrupations` can be switched on or
+off in the center's configuration. If they are off, **warn but do not block** —
+the caller may legitimately want to try.
+
+Use `warnings.warn(..., UserWarning)`, not the logger: Python shows it by default
+in a plain script without any logging setup, which is how these scripts are run.
+
+TODO: the field name in the center config that flags these as enabled is not
+known yet. Discover it with `scripts/explore_api.py` before implementing.
+
+## Operations deliberately left out
+
+- **`all-dictionaries/{id}/delete` is not implemented.** A dictionary must not be
+  deleted casually; if someone really needs it, they do it from the web UI.
+  Do not add it "for completeness".
+- **Pill colours and shapes are read-only from this library.**
+  `translations/search?context=medicine_pill_colors` and
+  `...?context=medicine_pill_shapes` may be listed, but modifications go through
+  the web UI.
+
+## API quirks — do not "fix" these
+
+The API is inconsistent in ways that look like bugs but are real. Mirror them.
+
+- **`medicines-families` vs `medicine-families`.** Searching and fetching a
+  single medicine use `medicines-families`; creating and updating a family uses
+  `medicine-families`. Both are real. Do not normalise them.
+- **Nurses have no list endpoint of their own.** They are users:
+  `/installations/{i}/users/search?user_type_id=3`. Creating a nurse means
+  creating a user of type Nurse. And `/nurses/{id}/shifts` takes the **user id**,
+  not some separate nurse id.
+- **`user_role_id_to_exclude=1`** matters on `/users/search` — it hides a role
+  you normally don't want listed.
+- **Bare collection paths exist but are unused.** `cassettes`,
+  `medication-providers`, `nurses`, `users`, `imported-medicines`,
+  `medicines-families`, `machine-models` all respond without `/search`, but the
+  library always goes through `/search`.
+- **Productions are installation-level, but some sub-routes hang off the
+  center:** `/installations/{i}/centers/{c}/productions/{p}/medicine-families`,
+  `.../production-filters`, `.../production-filters/update`, `.../update`.
+  Others are installation-level: `/installations/{i}/productions/{p}/fsps`.
+- **Medicine customisation is per center**
+  (`/installations/{i}/centers/{c}/medicines/{id}/customized` and `/customize`)
+  even though the medicine itself is installation-level. There is also an
+  installation-level `/installations/{i}/medicines/{id}/customize`.
+- **Lookups that are not by id:** `cassettes/find-with-chip/{chip}` and
+  `paper-rolls/find-by-uuid` (needs the exact uuid, otherwise 404).
+
+---
+
+# Scope map
+
+```
+client.installations()                     -> /installations/search
+client.root                                -> resources with no installation
+client.installation(i)                     -> /installations/{i}
+```
+
+```
+client.root
+  paper_rolls, paper_roll_uploads, translations, all_dictionaries,
+  licenses, machine_models
+  support_access_logs                      (super-admin only)
+
+client.installation(i)
+  details()                                -> /installations/{i}
+  centers, cassettes, machines, trays, layouts, warehouses, fill_stations,
+  medication_providers, users, medicines, medicine_families,
+  medicines_families, productions
+  .cassette(x)      -> medicines.add(), replenishes.add(), history
+  .machine(m)       -> configuration, certificate, bases, fsps
+  .tray(t)
+  .fill_station(f)
+  .user(u)          -> sessions, user_mobile_alerts
+  .nurse(user_id)   -> shifts
+  .production(p)    -> dose_takes, fsps, without_bags, save_to_machine(),
+                       send_to_machine(), set_status()
+  .center(c)
+     patients, doctors, modules, intakes, intake_agrupations,
+     imported_medicines
+     update(), import_patients_and_treatments()
+     .module(m)     -> submodules
+     .patient(p)    -> treatments
+```
+
+`Installation` currently exposes `center(id)` but no `centers` collection — add
+it, the plural/singular rule applies here too.
+
+---
+
+# Endpoint catalogue
+
+The paths below are the target surface of the library. Ids in the examples are
+real ones from the maintainer's environment (`{i}` = installation, `{c}` =
+center). Entries marked *(verify)* were transcribed from browser traffic and have
+not been confirmed against the API yet.
+
+## Root
+
+| Path | Notes |
+|---|---|
+| `/machine-models/search` | `query`, `itemsPerPage=1000`. **Not** admin-only, any user sees it |
+| `/paper-rolls/search` | snake_case `items_per_page=10`, `page`. ~200k rows |
+| `/paper-rolls/{id}` | e.g. `200261` |
+| `/paper-rolls/find-by-uuid` | exact uuid or 404 |
+| `/paper-rolls/create` | |
+| `/paper-rolls/import-csv-file` | CSV upload |
+| `/paper-roll-uploads/search` | `page`, `itemsPerPage=-1`; sends both spellings *(verify)* |
+| `/translations/search` | `items_per_page=-1`, `page`, `query`, `locale`, `context` |
+| — `context=medicine_pill_colors` | medicine colours, `locale=ES`. Read-only here |
+| — `context=medicine_pill_shapes` | pill shapes, `locale=EN`. Read-only here |
+| `/all-dictionaries/search` | `page`, `itemsPerPage=-1`, `query` |
+| `/all-dictionaries/{id}` | |
+| `/all-dictionaries/create` | |
+| `/all-dictionaries/{id}/update` | |
+| `/all-dictionaries/{id}/delete` | **NOT IMPLEMENTED** — web UI only |
+| `/all-dictionaries/{id}/medicines/export-csv-file` | sends an email, downloads nothing |
+| `/all-dictionaries/{id}/medicine-families/export-csv-file` | sends an email, downloads nothing |
+| `/all-dictionaries/{id}/medicines/import-csv-file` | CSV upload |
+| `/all-dictionaries/{id}/medicine-families/import-csv-file` | CSV upload |
+| `/support-access-logs` | **super-admin only**. `page`, `items_per_page=50` (max 200, never -1), `user_id`, `installation_id`, `center_id`, `from`, `to` |
+| `/licenses/search` | `page`, `itemsPerPage=-1`, `query`, `is_active` |
+| `/licenses/{id}` | |
+| `/licenses/create` | |
+| `/licenses/{id}/update` | |
+
+## Installation
+
+| Path | Notes |
+|---|---|
+| `/installations/search` | already implemented as `client.installations()` |
+| `/installations/{i}` | installation detail → `Installation.details()` |
+
+### Cassettes
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/cassettes/search` | `is_active`, `query`, `find_deactived_cassette_medicines=0\|1`, `itemsPerPage=-1` |
+| `/installations/{i}/cassettes/{id}` | |
+| `/installations/{i}/cassettes/create` | |
+| `/installations/{i}/cassettes/{id}/update` | |
+| `/installations/{i}/cassettes/{id}/medicines/add` | action, not CRUD |
+| `/installations/{i}/cassettes/{id}/replenishes/add` | action, not CRUD |
+| `/installations/{i}/cassettes/{id}/history` | `itemsPerPage=-1`, `sortBy[]=created_at`, `movement_direction=recharges` |
+| `/installations/{i}/cassettes/find-with-chip/{chip}` | lookup by chip, not by id |
+| `/installations/{i}/cassettes/export-to-atms` | downloads a file |
+| `/installations/{i}/cassettes/import-from-atms` | TXT upload |
+
+### Machines and trays
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/machines` | |
+| `/installations/{i}/machines/{m}` | |
+| `/installations/{i}/machines/{m}/configuration` | |
+| `/installations/{i}/machines/{m}/certificate` | downloads a JSON file |
+| `/installations/{i}/machines/{m}/bases` | |
+| `/installations/{i}/machines/{m}/fsps` | |
+| `/installations/{i}/machines/{m}/update` | |
+| `/installations/{i}/machines/create` | |
+| `/installations/{i}/trays` | |
+| `/installations/{i}/trays/{t}` | |
+| `/installations/{i}/trays/create` | |
+| `/installations/{i}/trays/{t}/update` | |
+
+### Fill stations
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/fill-stations` | |
+| `/installations/{i}/fill-stations/{f}` | |
+| `/installations/{i}/fill-stations/create` | |
+| `/installations/{i}/fill-stations/{f}/update` | |
+
+### Users and nurses
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/users/search` | `is_active`, `query`, `user_role_id_to_exclude=1` |
+| `/installations/{i}/users/create` | |
+| `/installations/{i}/users/{u}/update` | |
+| `/installations/{i}/users/{u}/sessions/search` | |
+| `/installations/{i}/users/{u}/user-mobile-alerts` | |
+| `/installations/{i}/users/search?user_type_id=3` | this **is** the nurse list |
+| `/installations/{i}/nurses/{user_id}/shifts` | id is the user id |
+| `/installations/{i}/nurses/{user_id}/shifts/create` | body needs every module and submodule listed |
+
+TODO: permissions, and assigning centers and installations to a user. Not mapped
+yet — discover with `scripts/explore_api.py`.
+
+### Medication providers
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/medication-providers/search` | `itemsPerPage`, `page` |
+| `/installations/{i}/medication-providers/create` | |
+| `/installations/{i}/medication-providers/update` | observed **without an id** in the path — *(verify)*, it should be `/{id}/update` |
+
+### Medicines and families
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/medicines-families/search` | `is_active`, `is_family=true\|false`, `is_medicine`, `with_count`. `-1` is the default but is very slow |
+| `/installations/{i}/medicines-families/medicines/{id}` | single medicine |
+| `/installations/{i}/medicines/create` | |
+| `/installations/{i}/medicines/{id}/update` | |
+| `/installations/{i}/medicines/{id}/customize` | installation-level customisation |
+| `/installations/{i}/medicines/{id}/community-characteristics` | |
+| `/installations/{i}/centers/{c}/medicines/{id}/customized` | per-center view |
+| `/installations/{i}/centers/{c}/medicines/{id}/customize` | per-center customisation |
+| `/installations/{i}/medicine-families/create` | note the singular `medicine-` |
+| `/installations/{i}/medicine-families/{id}/update` | |
+
+### Productions
+
+Low priority — the production module is huge and will barely be used.
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/productions/search` | `production_status_ids[]` (repeatable), `created_at=YYYY-MM-DD`, `sortBy[]=id` |
+| `/installations/{i}/productions/{p}/without-bags` | |
+| `/installations/{i}/productions/{p}/dose-takes/search` | |
+| `/installations/{i}/productions/{p}/save-to-machine` | |
+| `/installations/{i}/productions/{p}/send-to-machine` | |
+| `/installations/{i}/productions/{p}/set-status` | |
+| `/installations/{i}/productions/{p}/fsps` | |
+| `/installations/{i}/productions/{p}/fsps/{id}` | |
+| `/installations/{i}/centers/{c}/productions/{p}/medicine-families` | center-scoped |
+| `/installations/{i}/centers/{c}/productions/{p}/production-filters` | center-scoped |
+| `/installations/{i}/centers/{c}/productions/{p}/production-filters/update` | center-scoped |
+| `/installations/{i}/centers/{c}/productions/{p}/update` | center-scoped |
+
+### Already implemented, endpoint names unverified
+
+`layouts`, `warehouses` — first-pass guesses. Confirm against the API.
+
+## Center
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/centers/{c}/update` | |
+| `/installations/{i}/centers/{c}/import-patients-and-treatments` | action |
+| `/installations/{i}/centers/{c}/patients/search` | implemented |
+| `/installations/{i}/centers/{c}/intakes` | **guarded** — warn if disabled in the center config |
+| `/installations/{i}/centers/{c}/intake-agrupations` | **guarded** — same |
+| `/installations/{i}/centers/{c}/imported-medicines/search` | `itemsPerPage=-1`, `not_associated=true\|false` must be settable |
+| `/installations/{i}/centers/{c}/doctors` | |
+| `/installations/{i}/centers/{c}/doctors/{d}` | |
+| `/installations/{i}/centers/{c}/doctors/create` | |
+
+### Modules and submodules
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/centers/{c}/modules` | |
+| `/installations/{i}/centers/{c}/modules/create` | |
+| `/installations/{i}/centers/{c}/modules/{m}/update` | |
+| `/installations/{i}/centers/{c}/modules/{m}/submodules` | |
+| `/installations/{i}/centers/{c}/modules/{m}/submodules/create` | |
+| `/installations/{i}/centers/{c}/modules/{m}/submodules/{s}/update` | |
+| `/installations/{i}/centers/{c}/modules/{m}/submodules/{s}/delete` | |
+
+## Patient
+
+| Path | Notes |
+|---|---|
+| `/installations/{i}/centers/{c}/patients/{p}/treatments/search` | implemented |
+| `/installations/{i}/centers/{c}/patients/{p}/treatments/{t}` | implemented |
+
+## Not catalogued yet
+
+Many more endpoints exist and will be added over time. Use
+`scripts/explore_api.py` to discover them rather than guessing.
+
+---
+
+# Adding a resource
 
 Two steps:
 
 ```python
-# 1. in resources/installation.py or resources/center.py
+# 1. in resources/root.py, resources/installation.py or resources/center.py
 class Layouts(Resource):
     path = "layouts"
 
@@ -153,11 +486,13 @@ class Layouts(Resource):
 self.layouts = Layouts(client, self._base_path)
 ```
 
-`list()`, `search()` and `get()` come from `Resource` for free. Put it under
-`Installation` if it belongs to the pharmacy, under `Center` if it belongs to
-the residence.
+`list()`, `search()` and `get()` come from `Resource` for free. Override
+`items_per_page_param` or `default_items_per_page` when the catalogue above says
+the resource needs it. Put it under `Root` if it has no installation in its path,
+under `Installation` if it belongs to the pharmacy, under `Center` if it belongs
+to the residence.
 
-## Development
+# Development
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -165,12 +500,26 @@ pip install -e ".[dev]"
 python scripts/test_manual.py
 ```
 
-Runtime dependency: `httpx` only. Dev: `python-dotenv`.
+Runtime dependency: `httpx` only. Dev: `python-dotenv`, `playwright`.
 
 `scripts/test_manual.py` reads credentials from `.env` at the repo root and hits
 the real API. `.env` is gitignored; `.env.example` documents the variables.
 
-## Rules
+## Endpoint discovery (`scripts/explore_api.py`)
+
+Drives Chrome through Playwright against the **test environment** to find
+endpoints, query params and request bodies. It intercepts `**/api/**` and:
+
+- **Mode A** — aborts every non-`GET` request. Nothing can be written, not even
+  by accident while clicking around the SPA.
+- **Mode B** — fills a create/update form, reads `request.post_data()`, and
+  aborts the request anyway. You get the exact JSON body without the write ever
+  reaching the server. The web UI will show a network error; that is expected.
+
+Traffic goes to `artifacts/` (gitignored). Responses are recorded as **schema
+only** — keys and types, never values — because they carry real patient data.
+
+# Rules
 
 - **Never commit credentials.** No passwords, tokens or `.env` contents in
   source, tests, comments or commit messages.
@@ -179,14 +528,37 @@ the real API. `.env` is gitignored; `.env.example` documents the variables.
   truncated values (`token[:8]`).
 - Keep `raise_for_error()` as the only place that maps responses to exceptions.
 - Prefer adding a `Resource` subclass over writing raw `client.get()` calls.
+- No code at module scope in `src/` that performs I/O. Importing `amcoplus` must
+  never hit the network.
 
-## Status
+## Commits
+
+**Small, self-contained commits.** One reason to change per commit, with a
+subject line that says what it does. Never bundle unrelated work — a resource
+class, a tooling change and a doc update are three commits, not one.
+
+If a change grew large while working, split it before committing rather than
+writing a commit message with "and" in it.
+
+# Status
 
 Working: exception hierarchy, `raise_for_error()`, `AmcoClient` (login, token
 storage, expiry check, authenticated `request()`/`get()`/`post()`), resource
 scopes for installation / center / patient, installable package.
 
 Not done yet:
+- **Write operations.** `create()` / `update()` / `delete()` on `Resource`,
+  following the `{resource}/create` POST convention above, plus the named action
+  methods (`add`, `send-to-machine`, `import-patients-and-treatments`).
+- **Non-JSON responses and file uploads.** `request()` always calls `.json()`;
+  downloads and `multipart` CSV/TXT uploads need a path around it.
+- **`Root` scope** (`resources/root.py`) for paper rolls, dictionaries, licenses,
+  translations, machine models and support access logs.
+- **Configurable pagination.** `items_per_page_param` and
+  `default_items_per_page` as `Resource` class attributes.
+- **`Installation.centers`** collection (only `center(id)` exists today).
+- **The intakes / intake-agrupations warning**, once the center-config flag name
+  is known.
 - **Unit tests.** Deliberately deferred. When added, use `respx` to mock httpx
   and cover `raise_for_error()` branches, `is_token_valid()` edge cases (no
   token, just-expired, timezone handling) and re-login behaviour. Do not add
@@ -194,7 +566,6 @@ Not done yet:
 - **Automatic re-login on 401.** Retry exactly once, then fail — never loop.
 - **Reusable `httpx.Client`** plus `close()` and context-manager support;
   currently each request opens a new connection.
-- **Write operations** (`create`, `update`, `delete`) on `Resource`.
 - **Logging** via a `logging.getLogger("amcoplus")` logger. Never log tokens or
   credentials.
 - Most resource classes — only a first pass exists; verify actual endpoint names
