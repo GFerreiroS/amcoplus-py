@@ -43,7 +43,7 @@ from .exceptions import (
     NotFoundError,
     ValidationError,
 )
-from .resources import Center, Installation, Patient, Resource
+from .resources import BareListResource, Center, Installation, Patient, Resource
 
 __all__ = [
     "DEFAULT_API_URL",
@@ -51,6 +51,7 @@ __all__ = [
     "AmcoClient",
     "AmcoError",
     "AuthenticationError",
+    "BareListResource",
     "Center",
     "Installation",
     "NotFoundError",

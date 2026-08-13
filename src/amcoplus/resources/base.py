@@ -7,9 +7,53 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..client import AmcoClient
 
-__all__ = ["Resource"]
+__all__ = ["BareListResource", "Resource"]
 
 JSONDict = dict[str, Any]
+
+
+class BareListResource:
+    """A collection that returns a bare JSON list, not a `/search` envelope.
+
+    A few Amco+ collections have no `/search` and no `{"items": ...}` wrapper:
+    the GET on the collection path returns the list directly. A center's list of
+    integrations and its notification events are like this, the same way
+    `/installations/{i}/centers` is. `Resource` does not fit them — asking for
+    `{path}/search` would parse `search` as an id — so they use this instead.
+
+    Subclasses set `path` and are registered on the owning scope, reached as
+    `center.integrations` or `center.notification_events`. `list()` is the
+    collection GET; `get(id)` is one item at `{url}/{id}`.
+    """
+
+    path: str = ""
+    """Endpoint segment appended to the parent scope."""
+
+    def __init__(self, client: "AmcoClient", base_path: str) -> None:
+        self._client = client
+        self._base_path = base_path
+
+    @property
+    def url(self) -> str:
+        """Path of this collection, without the API base URL."""
+        return f"{self._base_path}/{self.path}"
+
+    def list(self, **filters: Any) -> list[JSONDict]:
+        """Return the collection as a plain list.
+
+        Args:
+            **filters: Optional query parameters. Which ones an endpoint accepts
+                depends on the resource — see its docstring. Amco+ silently
+                ignores unknown ones.
+        """
+        return self._client.get(self.url, params=filters or None)
+
+    def get(self, resource_id: int) -> JSONDict:
+        """Fetch a single item by id, from `{url}/{resource_id}`."""
+        return self._client.get(f"{self.url}/{resource_id}")
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(url={self.url!r})"
 
 
 class Resource:
