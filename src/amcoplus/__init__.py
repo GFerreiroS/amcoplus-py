@@ -43,17 +43,28 @@ from .exceptions import (
     NotFoundError,
     ValidationError,
 )
-from .resources import BareListResource, Center, Installation, Patient, Resource, Root
+from .resources import (
+    AuthFormField,
+    BareListResource,
+    Center,
+    Installation,
+    IntegrationProvider,
+    Patient,
+    Resource,
+    Root,
+)
 
 __all__ = [
     "DEFAULT_API_URL",
     "APIError",
     "AmcoClient",
     "AmcoError",
+    "AuthFormField",
     "AuthenticationError",
     "BareListResource",
     "Center",
     "Installation",
+    "IntegrationProvider",
     "NotFoundError",
     "Patient",
     "Resource",

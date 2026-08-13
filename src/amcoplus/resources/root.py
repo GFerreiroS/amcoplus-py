@@ -2,14 +2,51 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from .base import Resource
 
 if TYPE_CHECKING:
     from ..client import AmcoClient
 
-__all__ = ["INTEGRATION_PROVIDER_CATEGORIES", "IntegrationProviders", "Root"]
+__all__ = [
+    "INTEGRATION_PROVIDER_CATEGORIES",
+    "AuthFormField",
+    "IntegrationProvider",
+    "IntegrationProviders",
+    "Root",
+]
+
+
+class AuthFormField(TypedDict):
+    """One credential field a provider asks for, from its `auth_form`.
+
+    `name` is the key to use in the `auth_credential` you hand to
+    `Center.integrations.create`; `is_required` says whether the provider will
+    want it filled. `type` is the widget kind (`"text"`, `"file"`, ...) and
+    `options` is its extra config (e.g. `{"accept": ".csv"}` for a file). These
+    are hints for building the call — the library does not enforce them.
+    """
+
+    label: str
+    name: str
+    type: str
+    options: Any
+    is_required: bool
+
+
+class IntegrationProvider(TypedDict):
+    """One integration provider, as returned by `IntegrationProviders`.
+
+    `id` is what goes in `integration_provider_id` when creating an integration;
+    `auth_form` lists the credential fields it declares.
+    """
+
+    id: int
+    name: str
+    is_active: bool
+    is_center_needed: bool
+    auth_form: list[AuthFormField]
 
 
 INTEGRATION_PROVIDER_CATEGORIES = (
