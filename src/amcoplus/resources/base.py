@@ -25,9 +25,14 @@ class Resource:
         """Return the resource items. Extra kwargs are sent as query params."""
         params: dict[str, Any] = {"itemsPerPage": -1 if all_items else 15}
         params.update(filters)
-
         data = self._client.get(f"{self.url}/search", params=params)
         return data["items"]
+
+    def search(self, *, all_items: bool = True, **filters: Any) -> dict:
+        """Same as list() but returns the full envelope, including maxResults."""
+        params: dict[str, Any] = {"itemsPerPage": -1 if all_items else 15}
+        params.update(filters)
+        return self._client.get(f"{self.url}/search", params=params)
 
     def get(self, resource_id: int) -> dict:
         """Fetch a single item by id."""

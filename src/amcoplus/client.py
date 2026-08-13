@@ -113,6 +113,17 @@ class AmcoClient:
     def post(self, endpoint: str, **kwargs) -> dict:
         return self.request("POST", endpoint, **kwargs)
 
+    def installation(self, installation_id: int):
+            """Return an Installation scope for the given id."""
+            from .resources.installation import Installation
+            return Installation(self, installation_id)
+
+    def installations(self, **filters):
+        """List all installations visible to the current user."""
+        params = {"itemsPerPage": -1}
+        params.update(filters)
+        return self.get("/installations/search", params=params)["items"]
+
 try:
     client = AmcoClient("gferreiro@farmadosis.com", "Farmadosis3")
     data = client.get("/installations/search", params={

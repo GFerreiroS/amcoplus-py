@@ -6,13 +6,18 @@ from .exceptions import (
     NotFoundError,
     ValidationError,
 )
+from .resources import Center, Installation, Patient, Resource
 
 __all__ = [
     "APIError",
     "AmcoClient",
     "AmcoError",
     "AuthenticationError",
+    "Center",
+    "Installation",
     "NotFoundError",
+    "Patient",
+    "Resource",
     "ValidationError",
 ]
 
