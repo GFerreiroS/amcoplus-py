@@ -162,23 +162,28 @@ does not exist returns **HTTP 500 with an HTML body**, which comes out of
 `NotFoundError`. Only bad *scope* ids (installation, center) give a real 404
 with an envelope. Never promise callers a `NotFoundError` for a missing item.
 
-## Write operations: Amco+ is not verb-REST
+## Write operations: sub-path names, mixed HTTP verbs
 
-Writes are `POST` requests to a **sub-path**, not HTTP verbs on the collection:
+Writes go to a named **sub-path** (`create` / `{id}/update` / `{id}/delete`),
+never a bare verb on the collection. But the HTTP method is **not** uniform —
+verified across integrations, centers, doctors, modules, submodules and intakes:
 
 | Operation | Path | HTTP method |
 |---|---|---|
-| create | `{resource}/create` | POST |
-| update | `{resource}/{id}/update` | POST |
-| delete | `{resource}/{id}/delete` | POST |
+| create | `{resource}/create` | **POST** |
+| update | `{resource}/{id}/update` | **PUT** (POST → 405) |
+| delete | `{resource}/{id}/delete` | **DELETE** (POST → 405) |
 
-**Never** map these to `PUT`, `PATCH` or HTTP `DELETE`. When `Resource` grows
-`create()` / `update()` / `delete()`, they must build these paths.
+So the convention is POST-create / PUT-update / DELETE-delete. (An earlier note
+here claimed all three were POST and "never PUT/DELETE"; that was wrong.)
+`WritableBareListResource` builds these. Caveats seen in practice:
 
-The rule holds almost everywhere, but it is not absolute — confirm a new write
-against the API before trusting it. `integration-provider-customizations` is the
-known exception: its update is a **PUT** and its delete an HTTP **DELETE** (see
-the center Integrations table), and POSTing either gives 405.
+- **Update body:** usually partial is fine (center update merges); integrations
+  are the exception — their PUT wants the whole body, a partial one 500s.
+- **Not every resource has all three.** Doctors, modules, intakes-association and
+  intakes-grouping have create + update but **no delete** (DELETE → 404/54002).
+  Only submodules (and integrations) delete.
+- Still confirm a new write against the API before trusting it.
 
 Some writes don't follow the pattern because they are actions, not CRUD:
 `cassettes/{id}/medicines/add`, `cassettes/{id}/replenishes/add`,
@@ -544,10 +549,11 @@ actions: `request_centers` (`resiplus_center`),
 `request_farmadosis_installations` (`installation_id`),
 `request_farmadosis_centers` (`center_id`).
 
-**This resource breaks the "writes are POST to a sub-path" rule.** Update is a
-PUT and delete is an HTTP DELETE — POSTing either gives 405. Both return no body
-(202/204), which is why `request()` returns `None` on empty content. There is no
-hard delete.
+**Writes follow the general POST-create / PUT-update / DELETE-delete convention**,
+with two quirks specific to this resource: the PUT update wants the **whole** body
+(a partial one 500s), and DELETE is a **soft** delete (`is_active=false`, row
+stays in the list — there is no hard delete). Both return no body (202/204), which
+is why `request()` returns `None` on empty content.
 
 `auth_credential` keys are the chosen provider's `auth_form` field `name`s, and it
 holds **every** field's value (the web form dumps them all in): `text`/`textarea`/
