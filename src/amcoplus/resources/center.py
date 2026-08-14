@@ -14,6 +14,8 @@ __all__ = [
     "Center",
     "Doctors",
     "ImportedMedicines",
+    "IntakesAssociation",
+    "IntakesGrouping",
     "Integrations",
     "Module",
     "Modules",
@@ -354,6 +356,34 @@ class ImportedMedicines(Resource):
     path = "imported-medicines"
 
 
+class IntakesAssociation(WritableBareListResource):
+    """A center's intakes — the medication times ("tomas").
+
+    `/installations/{i}/centers/{c}/intakes-association`
+
+    Bare list, with `create` (POST) and `update` (PUT); no delete. Each item is
+    a time slot: `name`, `time`, `hour`, `minute`, `color`, `is_active`, `url`.
+
+    The real path is `intakes-association`, not the `intakes` the older notes
+    guessed. The center-config flags `use_intakes_association` /
+    `use_intakes_grouping` toggle the feature but do **not** gate this endpoint —
+    it answers whether they are on or off.
+    """
+
+    path = "intakes-association"
+
+
+class IntakesGrouping(WritableBareListResource):
+    """A center's intake groupings — `.../intakes-grouping`.
+
+    Bare list, with `create` (POST) and `update` (PUT); no delete. The real path
+    is `intakes-grouping`, not the `intake-agrupations` the older notes guessed,
+    and it too answers regardless of the center-config flags.
+    """
+
+    path = "intakes-grouping"
+
+
 class Module:
     """A single module of a center. Its submodules hang off here.
 
@@ -391,6 +421,8 @@ class Center:
         doctors: See `Doctors`.
         modules: See `Modules`; a module's submodules are under `module(m)`.
         imported_medicines: See `ImportedMedicines`.
+        intakes_association: See `IntakesAssociation` (the "tomas").
+        intakes_grouping: See `IntakesGrouping`.
 
     Its own record is `details()`, and `update()` changes its configuration.
 
@@ -415,6 +447,8 @@ class Center:
         self.doctors = Doctors(client, self._base_path)
         self.modules = Modules(client, self._base_path)
         self.imported_medicines = ImportedMedicines(client, self._base_path)
+        self.intakes_association = IntakesAssociation(client, self._base_path)
+        self.intakes_grouping = IntakesGrouping(client, self._base_path)
 
     def details(self) -> dict[str, Any]:
         """Fetch this center's own record — `GET /installations/{i}/centers/{c}`.
