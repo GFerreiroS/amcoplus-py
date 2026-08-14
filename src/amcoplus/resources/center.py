@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Mapping
 
-from .base import BareListResource, Resource
+from .base import BareListResource, Resource, WritableBareListResource
 
 if TYPE_CHECKING:
     from ..client import AmcoClient
@@ -12,9 +12,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Center",
+    "Doctors",
+    "ImportedMedicines",
     "Integrations",
+    "Module",
+    "Modules",
     "Patient",
     "Patients",
+    "Submodules",
     "Treatments",
 ]
 
@@ -302,6 +307,76 @@ class Treatments(Resource):
     path = "treatments"
 
 
+class Doctors(WritableBareListResource):
+    """Doctors of a center — `/installations/{i}/centers/{c}/doctors`.
+
+    Bare list. `create`/`update` (PUT) work; the endpoint has no delete.
+    """
+
+    path = "doctors"
+
+
+class Modules(WritableBareListResource):
+    """Modules of a center — `/installations/{i}/centers/{c}/modules`.
+
+    Bare list, with `create` and `update` (PUT). No delete. Reach a module's
+    submodules through `center.module(m).submodules`.
+    """
+
+    path = "modules"
+
+
+class Submodules(WritableBareListResource):
+    """Submodules of a module.
+
+    `/installations/{i}/centers/{c}/modules/{m}/submodules`
+
+    Bare list, with `create`, `update` (PUT) and `delete` (DELETE) — the one
+    center resource here that supports deletion.
+    """
+
+    path = "submodules"
+
+    def delete(self, submodule_id: int) -> Any:
+        """Delete a submodule — `DELETE .../submodules/{submodule_id}/delete`."""
+        return self._delete(submodule_id)
+
+
+class ImportedMedicines(Resource):
+    """Imported medicines of a center — `.../imported-medicines/search`.
+
+    Unlike most center collections this one paginates (envelope with `items`).
+
+    Filters:
+        not_associated (bool): Only medicines not yet linked to a real one.
+    """
+
+    path = "imported-medicines"
+
+
+class Module:
+    """A single module of a center. Its submodules hang off here.
+
+    Get one from a center rather than building it directly:
+
+        module = client.installation(65).center(417).module(12)
+
+    Attributes:
+        id: The module id, as it appears in the URL.
+        submodules: See `Submodules`.
+    """
+
+    def __init__(self, client: "AmcoClient", base_path: str, module_id: int) -> None:
+        self._client = client
+        self.id = module_id
+        self._base_path = f"{base_path}/modules/{module_id}"
+
+        self.submodules = Submodules(client, self._base_path)
+
+    def __repr__(self) -> str:
+        return f"Module(id={self.id})"
+
+
 class Center:
     """A residence served by an installation. Patient-level resources live here.
 
@@ -313,6 +388,9 @@ class Center:
         id: The center id, as it appears in the URL.
         patients: See `Patients`.
         integrations: See `Integrations`.
+        doctors: See `Doctors`.
+        modules: See `Modules`; a module's submodules are under `module(m)`.
+        imported_medicines: See `ImportedMedicines`.
 
     Its own record is `details()`, and `update()` changes its configuration.
 
@@ -334,6 +412,9 @@ class Center:
 
         self.patients = Patients(client, self._base_path)
         self.integrations = Integrations(client, self._base_path)
+        self.doctors = Doctors(client, self._base_path)
+        self.modules = Modules(client, self._base_path)
+        self.imported_medicines = ImportedMedicines(client, self._base_path)
 
     def details(self) -> dict[str, Any]:
         """Fetch this center's own record — `GET /installations/{i}/centers/{c}`.
@@ -370,6 +451,13 @@ class Center:
         return self._client.post(
             f"{self._base_path}/import-patients-and-treatments"
         )
+
+    def module(self, module_id: int) -> "Module":
+        """Return a `Module` scoped to this center, for its submodules.
+
+        No request is made; the scope is built locally.
+        """
+        return Module(self._client, self._base_path, module_id)
 
     def patient(self, patient_id: int) -> "Patient":
         """Return a `Patient` scoped to this center.
