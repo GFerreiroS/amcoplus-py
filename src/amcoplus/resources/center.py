@@ -217,6 +217,44 @@ class Integrations(BareListResource):
             "DELETE", f"{self.url}/{integration_id}/delete"
         )
 
+    def execute_action(
+        self,
+        integration_id: int,
+        action: str,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> Any:
+        """Run a provider action on an integration — how dynamic options load.
+
+        `POST .../integration-provider-customizations/{integration_id}/execute-action`
+
+        Some `auth_form` fields are dependent dropdowns: their `options` is not a
+        static list but `{"action": "<name>"}`, and the choices are fetched live
+        from the far end. Resiplus's `resiplus_center` (action `request_centers`)
+        is the example — the server connects with the given credentials and
+        returns the centres to pick from.
+
+        Args:
+            integration_id: An existing integration's id. The action runs against
+                a stored row; a not-yet-created one has no id to act on.
+            action: The action name from the field's `options["action"]`.
+            attributes: The field values the action needs (e.g. host, port, user,
+                password), as a plain mapping. Sent as the API's
+                `[{"key": ..., "value": ...}]` list for you.
+
+        Returns:
+            The action's result — for `request_centers`, the list of choices.
+        """
+        payload = {
+            "action": action,
+            "attributes": [
+                {"key": key, "value": value}
+                for key, value in (attributes or {}).items()
+            ],
+        }
+        return self._client.post(
+            f"{self.url}/{integration_id}/execute-action", json=payload
+        )
+
 
 class Treatments(Resource):
     """Treatments of a patient.
