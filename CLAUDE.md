@@ -516,10 +516,11 @@ via `execute-action`, body `{"action": <name>, "attributes": [{"key","value"}, .
 where attributes are the credential values the action needs (`Integrations.execute_action`
 takes a plain mapping and shapes it). Needs a real integration `{id}`.
 
-**Static select options are frontend-only.** Some selects (e.g. Resiplus's
-`protocol`: HTTP/HTTPS/FTP/SSH/SMB) have no `options` in the API `auth_form` — the
-web UI hardcodes the list. The library cannot enumerate those; the caller passes
-the value directly.
+**Static select options are frontend-only.** Some selects have no `options` in
+the API `auth_form` — the web UI hardcodes them, and the **value differs from the
+label**. Resiplus's `protocol` is `http` / `https` / `ftp` / `ssh` / `smb`
+(lowercase), shown as HTTP / HTTPS / FTP / SSH / SMB. The library cannot enumerate
+these; the caller passes the lowercase value directly.
 
 **This resource breaks the "writes are POST to a sub-path" rule.** Update is a
 PUT and delete is an HTTP DELETE — POSTing either gives 405. Both return no body
