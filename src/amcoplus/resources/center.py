@@ -314,14 +314,16 @@ class Center:
         patients: See `Patients`.
         integrations: See `Integrations`.
 
+    Its own record is `details()`, and `update()` changes its configuration.
+
     Example:
         ```python
         center = client.installation(65).center(417)
+        print(center.details()["name"])
+        center.update(use_intakes_association=True)
+
         for patient in center.patients.list(is_active=True):
             print(patient["id"])
-
-        for integration in center.integrations.list():
-            print(integration["id"])
         ```
     """
 
@@ -332,6 +334,42 @@ class Center:
 
         self.patients = Patients(client, self._base_path)
         self.integrations = Integrations(client, self._base_path)
+
+    def details(self) -> dict[str, Any]:
+        """Fetch this center's own record — `GET /installations/{i}/centers/{c}`.
+
+        Returns the full center object: name, contact fields, the production
+        defaults, and the config flags (`use_intakes_association`,
+        `use_intakes_grouping`, `use_families_for_productions`, ...). Some fields
+        are read-only (`active_patients_count`, `last_synchronization_*`).
+        """
+        return self._client.get(self._base_path)
+
+    def update(self, **fields: Any) -> Any:
+        """Update this center's configuration.
+
+        `PUT /installations/{i}/centers/{c}/update`
+
+        Breaks the usual POST-to-`/update` convention: it is an HTTP **PUT**
+        (POST gives 405). It takes a **partial** body — pass only the fields to
+        change and the rest are left untouched, e.g.
+        `center.update(use_intakes_association=True)`. The accepted keys are the
+        writable fields from `details()`.
+        """
+        return self._client.request("PUT", f"{self._base_path}/update", json=fields)
+
+    def import_patients_and_treatments(self) -> Any:
+        """Import patients and treatments from the center's supplier integration.
+
+        `POST /installations/{i}/centers/{c}/import-patients-and-treatments`
+
+        An action, not CRUD: it pulls from the center's configured
+        patients-and-treatments **supplier** integration. Without one, the API
+        answers HTTP 500 / `error_code` 87006.
+        """
+        return self._client.post(
+            f"{self._base_path}/import-patients-and-treatments"
+        )
 
     def patient(self, patient_id: int) -> "Patient":
         """Return a `Patient` scoped to this center.
