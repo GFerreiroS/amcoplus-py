@@ -150,6 +150,7 @@ status. Known so far:
 | 87006 | 500 | Import action found no supplier integration for the center |
 | 2014 | 404 | A path segment had the wrong type, e.g. `centers/search` read as an id |
 | 53001 | 422 | Field validation failed — Laravel `validation.*` rules on the request body. `details` maps each failing field path (e.g. `attributes.0.key`) to its rule |
+| 11001 / 11500 / 12001 / 12004 / 15002 / 16001 | 422 | Per-resource create/update body validation (modules, doctors, submodules, intakes-grouping, intakes-association) — same idea as 53001 with resource-specific codes |
 | 53002 | 422 | Request-DTO validation failed — a required query param is missing or the wrong type. Seen when a `/search` endpoint's `items_per_page` (int) is left null |
 | 54002 | 404 | Route does not exist — `Not Found on GET <url>` |
 
@@ -234,20 +235,20 @@ need raw bytes or `multipart` uploads, so the client needs a way to bypass that:
   `all-dictionaries/{id}/medicine-families/export-csv-file`.
   Do not treat their response as the exported data.
 
-## Guarded resources: intakes and intake-agrupations
+## Intakes are NOT guarded (an earlier assumption, now disproven)
 
-`centers/{c}/intakes` and `centers/{c}/intake-agrupations` can be switched on or
-off in the center's configuration. If they are off, **warn but do not block** —
-the caller may legitimately want to try.
+The notes used to say `centers/{c}/intakes` and `.../intake-agrupations` were
+gated by center-config flags and needed a warning when off. Verified against the
+API, that is wrong on two counts:
 
-Use `warnings.warn(..., UserWarning)`, not the logger: Python shows it by default
-in a plain script without any logging setup, which is how these scripts are run.
-
-The center config flags are on the center detail (`GET /installations/{i}/centers/{c}`):
-**`use_intakes_association`** (intakes) and **`use_intakes_grouping`**
-(intake-agrupations), both booleans. `use_families_for_productions` is a related
-production flag. When either intakes flag is `False`, warn before hitting the
-matching collection.
+- The **real paths** are `centers/{c}/intakes-association` (the "tomas") and
+  `centers/{c}/intakes-grouping`. The guessed `intakes` / `intake-agrupations`
+  404 with `error_code` 54002 no matter what.
+- Those real endpoints answer **200 regardless** of the config flags
+  `use_intakes_association` / `use_intakes_grouping` (both on the center detail,
+  booleans; `use_families_for_productions` is a related production flag). Toggling
+  a flag on center 310 did not change the route, so there is **no endpoint guard
+  and no warning to add** — they are plain `WritableBareListResource`s.
 
 ## Operations deliberately left out
 
@@ -319,15 +320,15 @@ client.installation(i)
   .production(p)    -> dose_takes, fsps, without_bags, save_to_machine(),
                        send_to_machine(), set_status()
   .center(c)
-     patients, doctors, modules, intakes, intake_agrupations,
-     imported_medicines, integrations
-     update(), import_patients_and_treatments()
+     patients, doctors, modules, imported_medicines, integrations,
+     intakes_association, intakes_grouping
+     details(), update(), import_patients_and_treatments()
      .module(m)     -> submodules
      .patient(p)    -> treatments
 ```
 
-`Installation` currently exposes `center(id)` but no `centers` collection — add
-it, the plural/singular rule applies here too.
+`Installation` exposes both `centers` (the bare-list collection) and `center(id)`
+(the full scope), per the plural/singular rule.
 
 ---
 
@@ -493,12 +494,10 @@ Low priority — the production module is huge and will barely be used.
 | `/installations/{i}/centers/{c}/update` | **PUT** (POST → 405), **partial body** accepted (merges) → `Center.update(**fields)` |
 | `/installations/{i}/centers/{c}/import-patients-and-treatments` | action, **POST** (PUT → 405). Pulls from the center's supplier integration; none → 500 / `error_code` 87006 |
 | `/installations/{i}/centers/{c}/patients/search` | implemented |
-| `/installations/{i}/centers/{c}/intakes` | **guarded** — warn if disabled in the center config |
-| `/installations/{i}/centers/{c}/intake-agrupations` | **guarded** — same |
-| `/installations/{i}/centers/{c}/imported-medicines/search` | `itemsPerPage=-1`, `not_associated=true\|false` must be settable |
-| `/installations/{i}/centers/{c}/doctors` | |
-| `/installations/{i}/centers/{c}/doctors/{d}` | |
-| `/installations/{i}/centers/{c}/doctors/create` | |
+| `/installations/{i}/centers/{c}/intakes-association` (+ `/{id}`) | the intakes ("tomas"): bare list, create/update, no delete → `center.intakes_association`. **Real path** — not the `intakes` guessed earlier |
+| `/installations/{i}/centers/{c}/intakes-grouping` | intake groupings: bare list, create/update, no delete → `center.intakes_grouping`. **Real path** — not `intake-agrupations` |
+| `/installations/{i}/centers/{c}/imported-medicines/search` | `itemsPerPage=-1`, `not_associated=true\|false` → `center.imported_medicines` |
+| `/installations/{i}/centers/{c}/doctors` (+ `/{d}`, `/create`, `/{d}/update`) | bare list; create (POST), update (PUT), no delete → `center.doctors` |
 
 ### Integrations (the INTEGRATIONS tab)
 
@@ -583,15 +582,18 @@ name is UI noise. `Integrations.credential_template` /
 
 ### Modules and submodules
 
-| Path | Notes |
-|---|---|
-| `/installations/{i}/centers/{c}/modules` | |
-| `/installations/{i}/centers/{c}/modules/create` | |
-| `/installations/{i}/centers/{c}/modules/{m}/update` | |
-| `/installations/{i}/centers/{c}/modules/{m}/submodules` | |
-| `/installations/{i}/centers/{c}/modules/{m}/submodules/create` | |
-| `/installations/{i}/centers/{c}/modules/{m}/submodules/{s}/update` | |
-| `/installations/{i}/centers/{c}/modules/{m}/submodules/{s}/delete` | |
+Implemented: `center.modules` (bare list, create/update, **no delete**) and
+`center.module(m).submodules` (bare list, create/update/**delete**).
+
+| Path | Method | Notes |
+|---|---|---|
+| `/installations/{i}/centers/{c}/modules` (+ `/{m}`) | GET | bare list / single |
+| `/installations/{i}/centers/{c}/modules/create` | POST | |
+| `/installations/{i}/centers/{c}/modules/{m}/update` | PUT | no module delete (DELETE → 404/54002) |
+| `/installations/{i}/centers/{c}/modules/{m}/submodules` (+ `/{s}`) | GET | bare list / single |
+| `/installations/{i}/centers/{c}/modules/{m}/submodules/create` | POST | |
+| `/installations/{i}/centers/{c}/modules/{m}/submodules/{s}/update` | PUT | |
+| `/installations/{i}/centers/{c}/modules/{m}/submodules/{s}/delete` | DELETE | |
 
 ## Patient
 
@@ -681,22 +683,22 @@ storage, expiry check, authenticated `request()`/`get()`/`post()`), resource
 scopes for installation / center / patient, installable package. `Root` scope
 with integration providers. `BareListResource` for envelope-less collections.
 Center integrations (`center.integrations`, with `create`/`update`/`delete`).
-`Center.details()` / `update()` / `import_patients_and_treatments()`.
+`Center.details()` / `update()` / `import_patients_and_treatments()`, plus
+`center.doctors`, `.modules` + `.module(m).submodules`, `.imported_medicines`,
+`.intakes_association`, `.intakes_grouping`, and `Installation.centers` —
+bare-list writes come from `WritableBareListResource`.
 
 Not done yet:
-- **Write operations.** `create()` / `update()` / `delete()` on `Resource`,
-  following the `{resource}/create` POST convention above, plus the named action
-  methods (`add`, `send-to-machine`, `import-patients-and-treatments`).
+- **Writes on `Resource`** (the search-based collections) and the named action
+  methods (`add`, `send-to-machine`). Bare-list writes exist via
+  `WritableBareListResource` (POST create / PUT update / DELETE delete), and the
+  `import-patients-and-treatments` action is done.
 - **Non-JSON responses and file uploads.** `request()` always calls `.json()`;
-  downloads and `multipart` CSV/TXT uploads need a path around it.
+  downloads and `multipart` CSV/TXT uploads need a path around it. (No-content
+  202/204 responses are already handled — they return `None`.)
 - **`Root` scope** (`resources/root.py`) exists but only wires integration
   providers; still to add: paper rolls, dictionaries, licenses, translations,
   machine models, support access logs.
-- **Configurable pagination.** `items_per_page_param` and
-  `default_items_per_page` as `Resource` class attributes.
-- **`Installation.centers`** collection (only `center(id)` exists today).
-- **The intakes / intake-agrupations warning**, once the center-config flag name
-  is known.
 - **Unit tests.** Deliberately deferred. When added, use `respx` to mock httpx
   and cover `raise_for_error()` branches, `is_token_valid()` edge cases (no
   token, just-expired, timezone handling) and re-login behaviour. Do not add
