@@ -514,6 +514,20 @@ hard delete.
 `auth_credential` keys come from the chosen provider's `auth_form` (`name`s).
 The library never validates it: `create`/`update` send whatever they are given.
 
+**One endpoint serves all nine categories** — the category and provider are not
+in the path, only `integration_provider_id` in the body — so `center.integrations`
+creates any provider of any section. The category only decides which provider
+list you pull from (`client.root.integration_providers(category)`).
+
+**`auth_form` field types**, across all categories: `text`, `textarea`, `number`,
+`password`, `select` (choices in `options`), `checkbox` are real credential
+inputs and go in `auth_credential`; `file` is the data channel (the integration
+exposes an upload URL — not sent at create); `message` is help text; a `"undefined"`
+name is UI noise. `Integrations.credential_template` /
+`missing_credential_fields` count only the real inputs, so a file-only provider
+(e.g. AMCO+ JSON) is creatable with `auth_credential={}` and a DB provider
+(e.g. Ekon Mutuam) yields its host/user/password/... to fill.
+
 **Dead routes — the SPA calls these but they 404 (54002). Do not implement:**
 `.../center-integrations`, `.../production-integrations`, `.../integrations`.
 
