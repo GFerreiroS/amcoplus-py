@@ -146,6 +146,8 @@ status. Known so far:
 |---|---|---|
 | 9001 | 422 | Invalid credentials |
 | 1001 | 404 | The installation does not exist |
+| 15003 | 404 | A real "row not found" for a single-item GET (seen on `intakes-association/{id}`) — unlike cassettes, this collection does 404 cleanly |
+| 87006 | 500 | Import action found no supplier integration for the center |
 | 2014 | 404 | A path segment had the wrong type, e.g. `centers/search` read as an id |
 | 53001 | 422 | Field validation failed — Laravel `validation.*` rules on the request body. `details` maps each failing field path (e.g. `attributes.0.key`) to its rule |
 | 53002 | 422 | Request-DTO validation failed — a required query param is missing or the wrong type. Seen when a `/search` endpoint's `items_per_page` (int) is left null |
@@ -482,9 +484,9 @@ Low priority — the production module is huge and will barely be used.
 | Path | Notes |
 |---|---|
 | `/installations/{i}/centers` | **bare JSON list**, no `/search`, no envelope. Confirmed |
-| `/installations/{i}/centers/{c}` | center detail. Confirmed |
-| `/installations/{i}/centers/{c}/update` | |
-| `/installations/{i}/centers/{c}/import-patients-and-treatments` | action |
+| `/installations/{i}/centers/{c}` | center detail (object). Confirmed → `Center.details()` |
+| `/installations/{i}/centers/{c}/update` | **PUT** (POST → 405), **partial body** accepted (merges) → `Center.update(**fields)` |
+| `/installations/{i}/centers/{c}/import-patients-and-treatments` | action, **POST** (PUT → 405). Pulls from the center's supplier integration; none → 500 / `error_code` 87006 |
 | `/installations/{i}/centers/{c}/patients/search` | implemented |
 | `/installations/{i}/centers/{c}/intakes` | **guarded** — warn if disabled in the center config |
 | `/installations/{i}/centers/{c}/intake-agrupations` | **guarded** — same |
@@ -673,6 +675,7 @@ storage, expiry check, authenticated `request()`/`get()`/`post()`), resource
 scopes for installation / center / patient, installable package. `Root` scope
 with integration providers. `BareListResource` for envelope-less collections.
 Center integrations (`center.integrations`, with `create`/`update`/`delete`).
+`Center.details()` / `update()` / `import_patients_and_treatments()`.
 
 Not done yet:
 - **Write operations.** `create()` / `update()` / `delete()` on `Resource`,
