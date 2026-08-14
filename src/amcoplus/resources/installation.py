@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .base import BareListResource, Resource
+from .base import Resource, WritableBareListResource
 
 if TYPE_CHECKING:
     from ..client import AmcoClient
@@ -21,12 +21,15 @@ __all__ = [
 ]
 
 
-class Centers(BareListResource):
+class Centers(WritableBareListResource):
     """Centers of an installation — `/installations/{i}/centers`.
 
     A **bare JSON list**, no `/search` and no envelope — asking for
     `/centers/search` fails (`search` is read as a center id). `get(id)` returns
     one center's detail; for the richer scope use `installation.center(id)`.
+
+    `create(**fields)` adds a center (POST `/centers/create`). There is no
+    center delete, and updates go through the scope: `installation.center(c).update()`.
     """
 
     path = "centers"
