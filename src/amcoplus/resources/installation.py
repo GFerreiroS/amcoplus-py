@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .base import Resource
+from .base import BareListResource, Resource
 
 if TYPE_CHECKING:
     from ..client import AmcoClient
@@ -12,12 +12,24 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Cassettes",
+    "Centers",
     "Installation",
     "Layouts",
     "Machines",
     "Trays",
     "Warehouses",
 ]
+
+
+class Centers(BareListResource):
+    """Centers of an installation — `/installations/{i}/centers`.
+
+    A **bare JSON list**, no `/search` and no envelope — asking for
+    `/centers/search` fails (`search` is read as a center id). `get(id)` returns
+    one center's detail; for the richer scope use `installation.center(id)`.
+    """
+
+    path = "centers"
 
 
 class Cassettes(Resource):
@@ -74,6 +86,7 @@ class Installation:
 
     Attributes:
         id: The installation id, as it appears in the URL.
+        centers: See `Centers`; for one center's full scope use `center(id)`.
         cassettes: See `Cassettes`.
         machines: See `Machines`.
         layouts: See `Layouts`.
@@ -94,6 +107,7 @@ class Installation:
         self.id = installation_id
         self._base_path = f"/installations/{installation_id}"
 
+        self.centers = Centers(client, self._base_path)
         self.cassettes = Cassettes(client, self._base_path)
         self.machines = Machines(client, self._base_path)
         self.layouts = Layouts(client, self._base_path)
