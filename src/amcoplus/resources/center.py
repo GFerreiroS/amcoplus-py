@@ -37,9 +37,12 @@ class Integrations(BareListResource):
 
     This is the INTEGRATIONS tab of a center: each row wires the center to one
     provider (from `client.root.integration_providers(...)`) with a schedule.
-    The collection GET returns a bare list — no `/search`, no `{"items": ...}`
-    envelope. Writes follow the usual `create` / `{id}/update` / `{id}/delete`
-    POST convention.
+    One generic endpoint serves every category and every provider — the
+    category and provider are not in the path, only `integration_provider_id`
+    in the body — so `create` covers all of them. The collection GET returns a
+    bare list — no `/search`, no `{"items": ...}` envelope. Writes do not follow
+    the usual POST-to-subpath convention: `update` is a PUT and `delete` an HTTP
+    DELETE (see those methods).
 
     The library does not judge whether an integration will actually work:
     `create` sends whatever you give it, even a half-filled or wrong credential.
@@ -51,39 +54,64 @@ class Integrations(BareListResource):
 
     path = "integration-provider-customizations"
 
-    @staticmethod
-    def credential_template(provider: "IntegrationProvider") -> dict[str, None]:
-        """A blank `auth_credential` for a provider, keyed by its `auth_form`.
+    # auth_form entries that are not create-time credential inputs: `message`
+    # is help text, and a `file` field (e.g. a production `file`) is the data
+    # channel — the integration exposes an upload URL for it, it is not sent
+    # with create. Anything without a real `name` is UI noise (`undefined`).
+    _NON_CREDENTIAL_TYPES = frozenset({"message", "file"})
 
-        Returns `{field_name: None}` for every field the provider declares, so
-        you can see what to fill in without reading the raw `auth_form`:
+    @classmethod
+    def _credential_fields(
+        cls, provider: "IntegrationProvider"
+    ) -> list[dict[str, Any]]:
+        """The `auth_form` entries that are real create-time credential inputs."""
+        return [
+            field
+            for field in provider.get("auth_form", [])
+            if field.get("name")
+            and field["name"] != "undefined"
+            and field.get("type") not in cls._NON_CREDENTIAL_TYPES
+        ]
 
-            prov = client.root.integration_providers("productions").get(6)
+    @classmethod
+    def credential_template(
+        cls, provider: "IntegrationProvider"
+    ) -> dict[str, None]:
+        """A blank `auth_credential` for a provider, keyed by its input fields.
+
+        Returns `{field_name: None}` for every credential field the provider
+        declares — the scalar inputs (text/number/password/select/checkbox),
+        skipping help text and file fields — so you can see what to fill:
+
+            prov = client.root.integration_providers("productions").get(1)
             cred = center.integrations.credential_template(prov)
-            cred["username"] = "..."     # fill what you have
+            # {'host': None, 'port': None, ... 'password': None, ...}
+            cred["host"] = "..."          # fill what you have
             center.integrations.create(integration_provider_id=prov["id"],
                                        auth_credential=cred)
 
-        A convenience only — you may pass any dict to `create`.
+        A convenience only — you may pass any dict to `create`. Inspect the
+        provider's `auth_form` (or `client.root.integration_provider_form`) for
+        each field's `type` and `options`, e.g. the choices of a `select`.
         """
-        return {field["name"]: None for field in provider.get("auth_form", [])}
+        return {field["name"]: None for field in cls._credential_fields(provider)}
 
-    @staticmethod
+    @classmethod
     def missing_credential_fields(
-        provider: "IntegrationProvider", auth_credential: Mapping[str, Any]
+        cls, provider: "IntegrationProvider", auth_credential: Mapping[str, Any]
     ) -> list[str]:
-        """Names of the provider's required fields left empty in a credential.
+        """Names of the provider's required input fields left empty.
 
         A non-blocking check: it *reports*, it does not raise. An empty list
-        means every `is_required` field has a non-empty value; otherwise you get
-        the field `name`s still missing, to warn on before (or after) creating.
-        `create` never calls this itself.
+        means every required credential field has a non-empty value; otherwise
+        you get the field `name`s still missing, to warn on before (or after)
+        creating. Help text and file fields are not counted. `create` never
+        calls this itself.
         """
         return [
             field["name"]
-            for field in provider.get("auth_form", [])
-            if field.get("is_required")
-            and not auth_credential.get(field["name"])
+            for field in cls._credential_fields(provider)
+            if field.get("is_required") and not auth_credential.get(field["name"])
         ]
 
     @staticmethod
