@@ -508,19 +508,31 @@ envelope), like centers. The providers themselves are root-level (above).
 | `.../integration-provider-customizations/{id}/delete` | **DELETE** | → 204, **soft delete** (sets `is_active=false`; row stays in the list) |
 | `.../integration-provider-customizations/{id}/execute-action` | POST | dynamic-option lookups (see below) |
 
-**Dynamic option fields.** An `auth_form` field's `options` is normally static,
-but a dependent dropdown carries `{"action": "<name>"}` instead — its choices are
-fetched live. Resiplus's `resiplus_center` uses action `request_centers`: the
-server connects with the entered credentials and returns the centres. Fetch them
-via `execute-action`, body `{"action": <name>, "attributes": [{"key","value"}, ...]}`
-where attributes are the credential values the action needs (`Integrations.execute_action`
-takes a plain mapping and shapes it). Needs a real integration `{id}`.
+**Select field choices live in `items`, not `options`.** A `select` field in the
+`auth_form` carries its choices under an **`items`** key: `[{key, value}]`, where
+**`key` is the value to put in `auth_credential`** and `value` is the display label
+(`protocol` → `[{key:"http", value:"HTTP"}, ...]`, so send `"http"`). `key` is
+usually a string but can be an int (`schema_object`: `1`/`2`).
+`Integrations.select_choices(field)` returns `{key: label}`. Known static selects:
 
-**Static select options are frontend-only.** Some selects have no `options` in
-the API `auth_form` — the web UI hardcodes them, and the **value differs from the
-label**. Resiplus's `protocol` is `http` / `https` / `ftp` / `ssh` / `smb`
-(lowercase), shown as HTTP / HTTPS / FTP / SSH / SMB. The library cannot enumerate
-these; the caller passes the lowercase value directly.
+| field | keys |
+|---|---|
+| `protocol`, `aegerus_protocol` | http, https, ftp, ssh, smb |
+| `text_encode_type` | UTF-8, UTF-16, ISO-8859-1, ISO-8859-6, ISO-8859-15, Windows-1252 |
+| `date_format_type` | Ymd, YmdHis, Y-m-d, `Y-m-d H:i:s`, dmY, dmYHis, d-m-Y, `d-m-Y H:i:s` |
+| `schema_object` | 1 (Stored Procedure), 2 (View) |
+| `environment` | P, T |
+| `nexa_api_environment` | pre, pro |
+| `delivery_production_dose_take_consumption_type` | DISPENSED, NOT_PACKABLE, DISPENSED_AND_NOT_PACKABLE |
+
+**Dynamic option fields.** A dependent dropdown has `items: []` and instead an
+`options` of `{"action": "<name>"}` — its choices are fetched live via
+`execute-action`, body `{"action": <name>, "attributes": [{"key","value"}, ...]}`
+where attributes are the credential values the action needs (`Integrations.execute_action`
+takes a plain mapping and shapes it; needs a real integration `{id}`). Known
+actions: `request_centers` (`resiplus_center`),
+`request_farmadosis_installations` (`installation_id`),
+`request_farmadosis_centers` (`center_id`).
 
 **This resource breaks the "writes are POST to a sub-path" rule.** Update is a
 PUT and delete is an HTTP DELETE — POSTing either gives 405. Both return no body
@@ -536,7 +548,7 @@ creates any provider of any section. The category only decides which provider
 list you pull from (`client.root.integration_providers(category)`).
 
 **`auth_form` field types**, across all categories: `text`, `textarea`, `number`,
-`password`, `select` (choices in `options`), `checkbox` are real credential
+`password`, `select` (choices in `items`, see below), `checkbox` are real credential
 inputs and go in `auth_credential`; `file` is the data channel (the integration
 exposes an upload URL — not sent at create); `message` is help text; a `"undefined"`
 name is UI noise. `Integrations.credential_template` /
