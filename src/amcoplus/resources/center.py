@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from .base import BareListResource, Resource, WritableBareListResource
+from .patient import Patient, Patients, Treatment, Treatments
 
 if TYPE_CHECKING:
     from ..client import AmcoClient
@@ -13,6 +15,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Center",
     "CenterMedicine",
+    "DoseIntervals",
     "Doctors",
     "ImportedMedicines",
     "IntakesAssociation",
@@ -23,19 +26,170 @@ __all__ = [
     "Patient",
     "Patients",
     "Submodules",
+    "Treatment",
     "Treatments",
 ]
 
 
-class Patients(Resource):
-    """Patients of a center — `/installations/{i}/centers/{c}/patients/search`.
+class _CenterScopeGuard:
+    """Best-effort guard for the backend's weak installation/center scoping."""
 
-    Filters:
-        is_active (bool): Only active patients.
-        query (str): Free-text search.
-    """
+    def __init__(self, client: "AmcoClient", center_path: str) -> None:
+        installation_path, center_segment = center_path.rsplit("/centers/", 1)
+        self._client = client
+        self.center_path = center_path
+        self.center_id = int(center_segment)
+        self.installation_id = int(installation_path.rsplit("/installations/", 1)[-1])
+        self._details: dict[str, Any] | None = None
 
-    path = "patients"
+    def details(self, *, refresh: bool = True) -> dict[str, Any]:
+        """Fetch the center and validate both ids returned by the API."""
+        if self._details is not None and not refresh:
+            return self._details
+        details = self._client.get(self.center_path)
+        if not isinstance(details, dict):
+            raise TypeError("center detail response is not an object")
+        center_id = details.get("id")
+        installation_id = details.get("installation_id")
+        if (
+            not isinstance(center_id, int)
+            or isinstance(center_id, bool)
+            or center_id != self.center_id
+            or not isinstance(installation_id, int)
+            or isinstance(installation_id, bool)
+            or installation_id != self.installation_id
+        ):
+            raise ValueError("center does not belong to the scoped installation")
+        self._details = details
+        return details
+
+    def ensure(self, *, refresh: bool = False) -> None:
+        """Validate once for reads and freshly before mutations."""
+        self.details(refresh=refresh)
+
+
+class _CenterScopedClient:
+    """Client proxy that validates center ownership before nested requests."""
+
+    def __init__(self, client: "AmcoClient", guard: _CenterScopeGuard) -> None:
+        self._client = client
+        self._guard = guard
+
+    def get(self, endpoint: str, **kwargs: Any) -> Any:
+        if endpoint == self._guard.center_path:
+            return self._guard.details(refresh=True)
+        self._guard.ensure()
+        return self._client.get(endpoint, **kwargs)
+
+    def post(self, endpoint: str, **kwargs: Any) -> Any:
+        self._guard.ensure(refresh=True)
+        return self._client.post(endpoint, **kwargs)
+
+    def request(self, method: str, endpoint: str, **kwargs: Any) -> Any:
+        if method.upper() == "GET" and endpoint == self._guard.center_path:
+            return self._guard.details(refresh=True)
+        self._guard.ensure(refresh=method.upper() not in {"GET", "HEAD", "OPTIONS"})
+        return self._client.request(method, endpoint, **kwargs)
+
+    def get_bytes(self, endpoint: str, **kwargs: Any) -> bytes:
+        self._guard.ensure()
+        return self._client.get_bytes(endpoint, **kwargs)
+
+    def request_bytes(self, method: str, endpoint: str, **kwargs: Any) -> bytes:
+        self._guard.ensure(refresh=method.upper() not in {"GET", "HEAD", "OPTIONS"})
+        return self._client.request_bytes(method, endpoint, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+
+def _center_row(items: Any, resource_id: int, label: str) -> dict[str, Any]:
+    """Locate one id in a center-scoped collection without an item GET."""
+    if not isinstance(resource_id, int) or isinstance(resource_id, bool):
+        raise ValueError(f"{label} id must be an integer")
+    if not isinstance(items, list):
+        raise TypeError(f"{label} collection response is not a list")
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_id = item.get("id")
+        if (
+            isinstance(item_id, int)
+            and not isinstance(item_id, bool)
+            and item_id == resource_id
+        ):
+            return item
+    raise ValueError(f"{label} does not belong to the scoped center")
+
+
+def _reject_conflicting_id(
+    fields: Mapping[str, Any], key: str, expected: int
+) -> dict[str, Any]:
+    """Copy fields while rejecting a conflicting nested identity."""
+    body = dict(fields)
+    supplied = body.get(key)
+    if supplied is not None and (
+        not isinstance(supplied, int)
+        or isinstance(supplied, bool)
+        or supplied != expected
+    ):
+        raise ValueError(f"{key} does not match the scoped resource")
+    return body
+
+
+def _validate_installation_item(
+    details: Any,
+    resource_id: int,
+    installation_id: int,
+    label: str,
+) -> dict[str, Any]:
+    """Reject an item endpoint that resolved outside its installation."""
+    if not isinstance(resource_id, int) or isinstance(resource_id, bool):
+        raise ValueError(f"{label} id must be an integer")
+    if not isinstance(details, dict):
+        raise TypeError(f"{label} response is not an object")
+    returned_id = details.get("id")
+    returned_installation_id = details.get("installation_id")
+    if (
+        not isinstance(returned_id, int)
+        or isinstance(returned_id, bool)
+        or returned_id != resource_id
+        or not isinstance(returned_installation_id, int)
+        or isinstance(returned_installation_id, bool)
+        or returned_installation_id != installation_id
+    ):
+        raise ValueError(f"{label} does not belong to the scoped installation")
+    return details
+
+
+class _ScopedWritableBareListResource(WritableBareListResource):
+    """Bare center collection whose item writes require list membership."""
+
+    @property
+    def center_id(self) -> int:
+        center_segment = self._base_path.split("/centers/", 1)[-1].split("/", 1)[0]
+        return int(center_segment)
+
+    def _find(self, resource_id: int) -> dict[str, Any]:
+        return _center_row(self.list(), resource_id, type(self).__name__)
+
+    def get(self, resource_id: int) -> dict[str, Any]:
+        """Return an item only from this center's collection."""
+        return self._find(resource_id)
+
+    def create(self, **fields: Any) -> Any:
+        """Create after rejecting a conflicting body-level center id."""
+        body = _reject_conflicting_id(fields, "center_id", self.center_id)
+        return self._client.post(f"{self.url}/create", json=body)
+
+    def update(self, resource_id: int, **fields: Any) -> Any:
+        """Update only an id present in this center's collection."""
+        self._find(resource_id)
+        body = _reject_conflicting_id(fields, "id", resource_id)
+        body = _reject_conflicting_id(body, "center_id", self.center_id)
+        return self._client.request(
+            "PUT", f"{self.url}/{resource_id}/update", json=body
+        )
 
 
 class Integrations(BareListResource):
@@ -61,6 +215,14 @@ class Integrations(BareListResource):
     """
 
     path = "integration-provider-customizations"
+
+    def _find(self, integration_id: int) -> dict[str, Any]:
+        """Locate an integration in this center's bare collection."""
+        return _center_row(self.list(), integration_id, "integration")
+
+    def get(self, resource_id: int) -> dict[str, Any]:
+        """Return an integration only from this center's collection."""
+        return self._find(resource_id)
 
     # auth_form entries that are not create-time credential inputs: `message`
     # is help text, and a `file` field (e.g. a production `file`) is the data
@@ -96,9 +258,7 @@ class Integrations(BareListResource):
         return {c["key"]: c.get("value") for c in field.get("items") or []}
 
     @classmethod
-    def credential_template(
-        cls, provider: "IntegrationProvider"
-    ) -> dict[str, None]:
+    def credential_template(cls, provider: "IntegrationProvider") -> dict[str, None]:
         """A blank `auth_credential` for a provider, keyed by its input fields.
 
         Returns `{field_name: None}` for every credential field the provider
@@ -198,8 +358,13 @@ class Integrations(BareListResource):
             passes.
         """
         body = self._body(
-            integration_provider_id, auth_credential, type_frequency,
-            frequency, at_day, at_hour, at_minute,
+            integration_provider_id,
+            auth_credential,
+            type_frequency,
+            frequency,
+            at_day,
+            at_hour,
+            at_minute,
         )
         result = self._client.post(f"{self.url}/create", json=body)
         if isinstance(result, dict) and "data" in result:
@@ -227,9 +392,15 @@ class Integrations(BareListResource):
         `create`), not a partial one — a partial body 500s. Pass every field,
         including the ones you are not changing.
         """
+        self._find(integration_id)
         body = self._body(
-            integration_provider_id, auth_credential, type_frequency,
-            frequency, at_day, at_hour, at_minute,
+            integration_provider_id,
+            auth_credential,
+            type_frequency,
+            frequency,
+            at_day,
+            at_hour,
+            at_minute,
         )
         return self._client.request(
             "PUT", f"{self.url}/{integration_id}/update", json=body
@@ -245,9 +416,8 @@ class Integrations(BareListResource):
         stops showing in the UI, but `list()` still returns it. Amco+ exposes no
         hard delete for integrations.
         """
-        return self._client.request(
-            "DELETE", f"{self.url}/{integration_id}/delete"
-        )
+        self._find(integration_id)
+        return self._client.request("DELETE", f"{self.url}/{integration_id}/delete")
 
     def check(self, integration_id: int) -> Any:
         """Test an integration's connection — the "Comprobar conexión" button.
@@ -260,6 +430,7 @@ class Integrations(BareListResource):
         credentials, unreachable host) may instead answer HTTP 500, which surfaces
         as `APIError`.
         """
+        self._find(integration_id)
         return self._client.post(f"{self.url}/{integration_id}/check")
 
     def execute_action(
@@ -289,6 +460,7 @@ class Integrations(BareListResource):
         Returns:
             The action's result — for `request_centers`, the list of choices.
         """
+        self._find(integration_id)
         payload = {
             "action": action,
             "attributes": [
@@ -301,16 +473,7 @@ class Integrations(BareListResource):
         )
 
 
-class Treatments(Resource):
-    """Treatments of a patient.
-
-    `/installations/{i}/centers/{c}/patients/{p}/treatments/search`
-    """
-
-    path = "treatments"
-
-
-class Doctors(WritableBareListResource):
+class Doctors(_ScopedWritableBareListResource):
     """Doctors of a center — `/installations/{i}/centers/{c}/doctors`.
 
     Bare list. `create`/`update` (PUT) work; the endpoint has no delete.
@@ -318,8 +481,47 @@ class Doctors(WritableBareListResource):
 
     path = "doctors"
 
+    def specializations(self) -> list[dict[str, Any]]:
+        """Return the bare doctor-specialization lookup for this center."""
+        return self._client.get(f"{self.url}/specializations")
 
-class Modules(WritableBareListResource):
+
+class DoseIntervals(BareListResource):
+    """Allowed dose intervals for a medicine or medicine family.
+
+    `GET .../centers/{c}/dose-intervals`, filtered by either `medicine_id` or
+    `medicine_family_id`. This lookup is used by the treatment editor.
+    """
+
+    path = "dose-intervals"
+
+    def list(self, **filters: Any) -> list[dict[str, Any]]:
+        """List intervals after validating an optional medicine/family id."""
+        medicine_id = filters.get("medicine_id")
+        family_id = filters.get("medicine_family_id")
+        if medicine_id is not None and family_id is not None:
+            raise ValueError("pass medicine_id or medicine_family_id, not both")
+
+        installation_path = self._base_path.split("/centers/", 1)[0]
+        installation_id = int(installation_path.rsplit("/", 1)[-1])
+        if medicine_id is not None:
+            details = self._client.get(
+                f"{installation_path}/medicines/{medicine_id}"
+            )
+            _validate_installation_item(
+                details, medicine_id, installation_id, "medicine"
+            )
+        if family_id is not None:
+            details = self._client.get(
+                f"{installation_path}/medicine-families/{family_id}"
+            )
+            _validate_installation_item(
+                details, family_id, installation_id, "medicine family"
+            )
+        return super().list(**filters)
+
+
+class Modules(_ScopedWritableBareListResource):
     """Modules of a center — `/installations/{i}/centers/{c}/modules`.
 
     Bare list, with `create` and `update` (PUT). No delete. Reach a module's
@@ -329,7 +531,7 @@ class Modules(WritableBareListResource):
     path = "modules"
 
 
-class Submodules(WritableBareListResource):
+class Submodules(_ScopedWritableBareListResource):
     """Submodules of a module.
 
     `/installations/{i}/centers/{c}/modules/{m}/submodules`
@@ -340,8 +542,35 @@ class Submodules(WritableBareListResource):
 
     path = "submodules"
 
+    def __init__(self, client: "AmcoClient", base_path: str) -> None:
+        super().__init__(client, base_path)
+        center_path, module_segment = base_path.rsplit("/modules/", 1)
+        self.module_id = int(module_segment)
+        self._modules = Modules(client, center_path)
+
+    def _ensure_module(self) -> None:
+        """Require the parent module in this center's collection."""
+        self._modules._find(self.module_id)
+
+    def list(self, **filters: Any) -> list[dict[str, Any]]:
+        """List submodules only after proving the parent module."""
+        self._ensure_module()
+        return super().list(**filters)
+
+    def create(self, **fields: Any) -> Any:
+        """Create a submodule bound to the verified parent module."""
+        self._ensure_module()
+        body = _reject_conflicting_id(fields, "module_id", self.module_id)
+        return super().create(**body)
+
+    def update(self, resource_id: int, **fields: Any) -> Any:
+        """Update a submodule from this verified module's collection."""
+        body = _reject_conflicting_id(fields, "module_id", self.module_id)
+        return super().update(resource_id, **body)
+
     def delete(self, submodule_id: int) -> Any:
         """Delete a submodule — `DELETE .../submodules/{submodule_id}/delete`."""
+        self._find(submodule_id)
         return self._delete(submodule_id)
 
 
@@ -356,8 +585,15 @@ class ImportedMedicines(Resource):
 
     path = "imported-medicines"
 
+    def get(self, resource_id: int) -> dict[str, Any]:
+        """Return an item only from this center's paginated collection."""
+        result = self.search(all_items=True)
+        if not isinstance(result, dict):
+            raise TypeError("imported-medicine search response is not an object")
+        return _center_row(result.get("items"), resource_id, "imported medicine")
 
-class IntakesAssociation(WritableBareListResource):
+
+class IntakesAssociation(_ScopedWritableBareListResource):
     """A center's intakes — the medication times ("tomas").
 
     `/installations/{i}/centers/{c}/intakes-association`
@@ -374,7 +610,7 @@ class IntakesAssociation(WritableBareListResource):
     path = "intakes-association"
 
 
-class IntakesGrouping(WritableBareListResource):
+class IntakesGrouping(_ScopedWritableBareListResource):
     """A center's intake groupings — `.../intakes-grouping`.
 
     Bare list, with `create` (POST) and `update` (PUT); no delete. The real path
@@ -392,18 +628,34 @@ class CenterMedicine:
     **per-center** view and overrides. Get one from a center rather than
     building it directly:
 
-        med = client.installation(65).center(417).medicine(11561)
+        med = (
+            client.installation(installation_id)
+            .center(center_id)
+            .medicine(medicine_id)
+        )
 
     Attributes:
         id: The medicine id (an installation-level medicine id).
     """
 
-    def __init__(
-        self, client: "AmcoClient", base_path: str, medicine_id: int
-    ) -> None:
+    def __init__(self, client: "AmcoClient", base_path: str, medicine_id: int) -> None:
         self._client = client
         self.id = medicine_id
         self._base_path = f"{base_path}/medicines/{medicine_id}"
+        installation_path = base_path.split("/centers/", 1)[0]
+        self._installation_id = int(
+            installation_path.rsplit("/installations/", 1)[-1]
+        )
+
+    def _checked_customized(self) -> dict[str, Any]:
+        """Fetch and reject a medicine resolved from another installation."""
+        details = self._client.get(f"{self._base_path}/customized")
+        return _validate_installation_item(
+            details,
+            self.id,
+            self._installation_id,
+            "medicine",
+        )
 
     def customized(self) -> dict[str, Any]:
         """This medicine as this center sees it.
@@ -414,7 +666,7 @@ class CenterMedicine:
         (flags like `is_emblistable`, `can_use_fsp`, `force_dispense_in_tray`,
         `dispense_in_unique_bag`, ...).
         """
-        return self._client.get(f"{self._base_path}/customized")
+        return self._checked_customized()
 
     def customize(self, **fields: Any) -> Any:
         """Apply this center's overrides to the medicine.
@@ -424,6 +676,9 @@ class CenterMedicine:
         A **PUT** (POST → 405), returns 202. Pass the fields to override; the
         keys are the writable ones from `customized()`.
         """
+        if {"id", "installation_id", "center_id"}.intersection(fields):
+            raise ValueError("customize accepts override fields, not identity ids")
+        self._checked_customized()
         return self._client.request(
             "PUT", f"{self._base_path}/customize", json=fields
         )
@@ -437,7 +692,11 @@ class Module:
 
     Get one from a center rather than building it directly:
 
-        module = client.installation(65).center(417).module(12)
+        module = (
+            client.installation(installation_id)
+            .center(center_id)
+            .module(module_id)
+        )
 
     Attributes:
         id: The module id, as it appears in the URL.
@@ -460,13 +719,14 @@ class Center:
 
     Get one from an installation rather than building it directly:
 
-        center = client.installation(65).center(417)
+        center = client.installation(installation_id).center(center_id)
 
     Attributes:
         id: The center id, as it appears in the URL.
         patients: See `Patients`.
         integrations: See `Integrations`.
         doctors: See `Doctors`.
+        dose_intervals: See `DoseIntervals`.
         modules: See `Modules`; a module's submodules are under `module(m)`.
         imported_medicines: See `ImportedMedicines`.
         intakes_association: See `IntakesAssociation` (the "tomas").
@@ -476,27 +736,30 @@ class Center:
 
     Example:
         ```python
-        center = client.installation(65).center(417)
-        print(center.details()["name"])
+        center = client.installation(installation_id).center(center_id)
+        print(sorted(center.details()))
         center.update(use_intakes_association=True)
 
-        for patient in center.patients.list(is_active=True):
+        page = center.patients.search(all_items=False, page=1, is_active=True)
+        for patient in page["items"]:
             print(patient["id"])
         ```
     """
 
     def __init__(self, client: "AmcoClient", base_path: str, center_id: int) -> None:
-        self._client = client
         self.id = center_id
         self._base_path = f"{base_path}/centers/{center_id}"
+        self._scope_guard = _CenterScopeGuard(client, self._base_path)
+        self._client = _CenterScopedClient(client, self._scope_guard)
 
-        self.patients = Patients(client, self._base_path)
-        self.integrations = Integrations(client, self._base_path)
-        self.doctors = Doctors(client, self._base_path)
-        self.modules = Modules(client, self._base_path)
-        self.imported_medicines = ImportedMedicines(client, self._base_path)
-        self.intakes_association = IntakesAssociation(client, self._base_path)
-        self.intakes_grouping = IntakesGrouping(client, self._base_path)
+        self.patients = Patients(self._client, self._base_path)
+        self.integrations = Integrations(self._client, self._base_path)
+        self.doctors = Doctors(self._client, self._base_path)
+        self.dose_intervals = DoseIntervals(self._client, self._base_path)
+        self.modules = Modules(self._client, self._base_path)
+        self.imported_medicines = ImportedMedicines(self._client, self._base_path)
+        self.intakes_association = IntakesAssociation(self._client, self._base_path)
+        self.intakes_grouping = IntakesGrouping(self._client, self._base_path)
 
     def details(self) -> dict[str, Any]:
         """Fetch this center's own record — `GET /installations/{i}/centers/{c}`.
@@ -530,9 +793,23 @@ class Center:
         patients-and-treatments **supplier** integration. Without one, the API
         answers HTTP 500 / `error_code` 87006.
         """
-        return self._client.post(
-            f"{self._base_path}/import-patients-and-treatments"
-        )
+        return self._client.post(f"{self._base_path}/import-patients-and-treatments")
+
+    def import_patient_counters(self) -> Any:
+        """Import patient counter data from the configured integration.
+
+        `POST /installations/{i}/centers/{c}/import-patients-counters`
+        """
+        return self._client.post(f"{self._base_path}/import-patients-counters")
+
+    def associate_treatments(self) -> Any:
+        """Associate pending imported treatments for this center.
+
+        `POST /installations/{i}/centers/{c}/associate-treatments`
+
+        This is a mutating center-wide action with no preview endpoint.
+        """
+        return self._client.post(f"{self._base_path}/associate-treatments")
 
     def module(self, module_id: int) -> "Module":
         """Return a `Module` scoped to this center, for its submodules.
@@ -557,26 +834,3 @@ class Center:
 
     def __repr__(self) -> str:
         return f"Center(id={self.id})"
-
-
-class Patient:
-    """A single patient. Treatment-level resources hang off here.
-
-    Get one from a center rather than building it directly:
-
-        patient = client.installation(65).center(417).patient(3955)
-
-    Attributes:
-        id: The patient id, as it appears in the URL.
-        treatments: See `Treatments`.
-    """
-
-    def __init__(self, client: "AmcoClient", base_path: str, patient_id: int) -> None:
-        self._client = client
-        self.id = patient_id
-        self._base_path = f"{base_path}/patients/{patient_id}"
-
-        self.treatments = Treatments(client, self._base_path)
-
-    def __repr__(self) -> str:
-        return f"Patient(id={self.id})"

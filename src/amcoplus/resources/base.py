@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..client import AmcoClient
 
-__all__ = ["BareListResource", "Resource", "WritableBareListResource"]
+__all__ = [
+    "BareListResource",
+    "DirectResource",
+    "Resource",
+    "WritableBareListResource",
+]
 
 JSONDict = dict[str, Any]
 
@@ -17,12 +22,12 @@ class BareListResource:
 
     A few Amco+ collections have no `/search` and no `{"items": ...}` wrapper:
     the GET on the collection path returns the list directly. A center's list of
-    integrations and its notification events are like this, the same way
+    integrations and an installation's machines are like this, the same way
     `/installations/{i}/centers` is. `Resource` does not fit them — asking for
     `{path}/search` would parse `search` as an id — so they use this instead.
 
     Subclasses set `path` and are registered on the owning scope, reached as
-    `center.integrations` or `center.notification_events`. `list()` is the
+    `center.integrations` or `installation.machines`. `list()` is the
     collection GET; `get(id)` is one item at `{url}/{id}`.
     """
 
@@ -86,9 +91,7 @@ class WritableBareListResource(BareListResource):
 
         Exposed as `delete` only by subclasses whose endpoint supports it.
         """
-        return self._client.request(
-            "DELETE", f"{self.url}/{resource_id}/delete"
-        )
+        return self._client.request("DELETE", f"{self.url}/{resource_id}/delete")
 
 
 class Resource:
@@ -160,6 +163,16 @@ class Resource:
         """
         return self.search(all_items=all_items, **filters)["items"]
 
+    def _search_params(self, all_items: bool, filters: JSONDict) -> JSONDict:
+        """Build this endpoint's pagination and filter query."""
+        params: JSONDict = {}
+        if self.default_items_per_page is not None:
+            params[self.items_per_page_param] = (
+                self.default_items_per_page if all_items else 15
+            )
+        params.update(filters)
+        return params
+
     def search(self, *, all_items: bool = True, **filters: Any) -> JSONDict:
         """Same as `list()` but returns the full envelope.
 
@@ -169,21 +182,31 @@ class Resource:
         Returns:
             `{"items": [...], "maxResults": N}`.
         """
-        params: JSONDict = {}
-        if self.default_items_per_page is not None:
-            params[self.items_per_page_param] = (
-                self.default_items_per_page if all_items else 15
-            )
-        params.update(filters)
+        params = self._search_params(all_items, filters)
         return self._client.get(f"{self.url}/search", params=params or None)
 
     def get(self, resource_id: int) -> JSONDict:
         """Fetch a single item by id, from `{url}/{resource_id}`.
 
-        Raises:
-            NotFoundError: The id does not exist.
+        Missing rows do not consistently produce an HTTP 404 in Amco+; some
+        endpoints instead fail with a generic API error. Callers should catch
+        `AmcoError` rather than relying on `NotFoundError` here.
         """
         return self._client.get(f"{self.url}/{resource_id}")
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(url={self.url!r})"
+
+
+class DirectResource(Resource):
+    """A paginated collection whose GET is its collection path directly.
+
+    Its response still has the usual `{"items": [...], "maxResults": N}`
+    envelope, but the endpoint is `{url}` rather than `{url}/search`. Patient
+    sales and holiday periods use this less common shape.
+    """
+
+    def search(self, *, all_items: bool = True, **filters: Any) -> JSONDict:
+        """Return the full pagination envelope from `GET {url}`."""
+        params = self._search_params(all_items, filters)
+        return self._client.get(self.url, params=params or None)

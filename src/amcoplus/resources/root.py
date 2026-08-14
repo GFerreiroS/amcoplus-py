@@ -4,19 +4,119 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from .base import Resource
+from .base import BareListResource, Resource
 
 if TYPE_CHECKING:
     from ..client import AmcoClient
 
 __all__ = [
     "INTEGRATION_PROVIDER_CATEGORIES",
+    "AllergyCatalog",
     "AuthFormField",
+    "Countries",
+    "DiagnoseTypes",
+    "DiagnosisCatalog",
+    "DysphagiaTextures",
+    "FunctionalUnits",
+    "Genders",
     "IntegrationProvider",
     "IntegrationProviders",
+    "InternationalClassificationDiseases",
+    "LabUnits",
+    "MedicineIngredients",
     "Root",
     "SelectChoice",
+    "TreatmentPlans",
 ]
+
+
+class Countries(BareListResource):
+    """Countries used by center address forms — `GET /countries`.
+
+    The endpoint returns a bare list of `{"id": int, "name": str}` rows, with
+    no `/search` suffix and no pagination parameters.
+    """
+
+    path = "countries"
+
+    def list(self, *, language: str | None = None) -> list[dict[str, Any]]:
+        """Return countries, optionally localized with the `Language` header."""
+        headers = {"Language": language} if language is not None else None
+        return self._client.get(self.url, headers=headers)
+
+
+class Genders(BareListResource):
+    """Patient genders — bare `GET /genders` lookup."""
+
+    path = "genders"
+
+
+class FunctionalUnits(BareListResource):
+    """Patient functional units — bare `GET /functional-units` lookup."""
+
+    path = "functional-units"
+
+
+class AllergyCatalog(BareListResource):
+    """Allergy-form lookup — bare `GET /allergies`."""
+
+    path = "allergies"
+
+
+class DiagnosisCatalog(BareListResource):
+    """Diagnosis-form lookup — bare `GET /diagnoses`."""
+
+    path = "diagnoses"
+
+
+class DiagnoseTypes(BareListResource):
+    """Diagnosis types — bare `GET /diagnose-types`."""
+
+    path = "diagnose-types"
+
+
+class DysphagiaTextures(BareListResource):
+    """Dysphagia textures — bare `GET /dysphagia-textures`."""
+
+    path = "dysphagia-textures"
+
+
+class LabUnits(BareListResource):
+    """Clinical laboratory units — bare `GET /lab-units`."""
+
+    path = "lab-units"
+
+
+class TreatmentPlans(BareListResource):
+    """Treatment-plan lookup — bare `GET /treatment-plans`."""
+
+    path = "treatment-plans"
+
+
+class _AutocompleteResource(Resource):
+    """Search lookup whose API spells page size `items_per_page`."""
+
+    items_per_page_param = "items_per_page"
+    default_items_per_page = 100
+
+
+class MedicineIngredients(_AutocompleteResource):
+    """Medicine ingredients used by patient allergies.
+
+    `GET /medicine-ingredients/search`, with `query` and `items_per_page`.
+    """
+
+    path = "medicine-ingredients"
+
+
+class InternationalClassificationDiseases(_AutocompleteResource):
+    """ICD diagnoses used by patient diagnosis rows.
+
+    `GET /international-classification-diseases/search`, with `query` and
+    `items_per_page`.
+    """
+
+    path = "international-classification-diseases"
 
 
 class SelectChoice(TypedDict):
@@ -117,18 +217,32 @@ class IntegrationProviders(Resource):
 
 
 class Root:
-    """Resources that hang off no installation: paper rolls, dictionaries,
-    licenses, translations, machine models — and integration providers.
+    """Resources that hang off no installation.
 
     Get it from the client rather than building it directly:
 
         client.root.integration_providers("productions").list()
 
-    Only integration providers are wired up so far; the rest are planned.
+    Patient-form dictionaries are exposed as bare lookup collections. The two
+    autocomplete dictionaries (`medicine_ingredients` and
+    `international_classification_diseases`) use paginated `/search` routes.
     """
 
     def __init__(self, client: "AmcoClient") -> None:
         self._client = client
+        self.countries = Countries(client, "")
+        self.genders = Genders(client, "")
+        self.functional_units = FunctionalUnits(client, "")
+        self.allergies = AllergyCatalog(client, "")
+        self.diagnoses = DiagnosisCatalog(client, "")
+        self.diagnose_types = DiagnoseTypes(client, "")
+        self.dysphagia_textures = DysphagiaTextures(client, "")
+        self.lab_units = LabUnits(client, "")
+        self.treatment_plans = TreatmentPlans(client, "")
+        self.medicine_ingredients = MedicineIngredients(client, "")
+        self.international_classification_diseases = (
+            InternationalClassificationDiseases(client, "")
+        )
 
     def integration_providers(self, category: str) -> IntegrationProviders:
         """Providers of one integration `category`.
@@ -152,6 +266,26 @@ class Root:
         return self._client.get(
             f"/integration-providers/{provider_id}/integration-provider-form"
         )
+
+    def unscoped_treatment(
+        self,
+        treatment_id: int,
+        *,
+        allow_unscoped: bool = False,
+    ) -> dict[str, Any]:
+        """Fetch `GET /treatments/{t}` without a patient ownership check.
+
+        This global endpoint can return clinical data using only a treatment
+        id. Prefer `center.patient(p).treatment(t).details()`, which verifies
+        membership first. Callers that genuinely have no patient scope must
+        opt in explicitly with `allow_unscoped=True`.
+        """
+        if not allow_unscoped:
+            raise ValueError(
+                "global treatment access requires allow_unscoped=True; "
+                "prefer a patient-scoped treatment"
+            )
+        return self._client.get(f"/treatments/{treatment_id}")
 
     def __repr__(self) -> str:
         return "Root()"

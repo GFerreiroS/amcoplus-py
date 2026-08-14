@@ -96,8 +96,12 @@ class AmcoClient:
         for installation in client.installations():
             print(installation["id"])
 
-        center = client.installation(65).center(417)
-        patients = center.patients.list(is_active=True)
+        center = client.installation(installation_id).center(center_id)
+        patients = center.patients.search(
+            all_items=False,
+            page=1,
+            is_active=True,
+        )["items"]
         ```
     """
 
@@ -164,27 +168,16 @@ class AmcoClient:
             return False
         return self.expires_at > datetime.now(timezone.utc)
 
-    def request(self, method: str, endpoint: str, **kwargs: Any) -> Any:
-        """Make an authenticated request, logging in first if needed.
-
-        Args:
-            method: HTTP method. Amco+ writes with `POST` to paths like
-                `{resource}/create`, so this is almost always `"GET"` or
-                `"POST"`.
-            endpoint: Path starting with `/`, relative to `base_url`.
-            **kwargs: Passed through to httpx — typically `params=` or `json=`.
-
-        Returns:
-            The decoded JSON body. Usually a `dict`, but a few endpoints
-            return a bare `list` — `/installations/{id}/centers` is one — so
-            this is deliberately untyped. A no-content response (HTTP 202/204,
-            as the integration update and delete return) gives `None`.
-            Endpoints that return a file are not supported yet.
-        """
+    def _request_response(
+        self, method: str, endpoint: str, **kwargs: Any
+    ) -> httpx.Response:
+        """Return one authenticated, error-checked HTTP response."""
         if not self.is_token_valid():
             self.login()
 
-        headers = {"Authorization": f"Bearer {self.access_token}"}
+        supplied_headers = kwargs.pop("headers", None) or {}
+        headers = httpx.Headers(supplied_headers)
+        headers["Authorization"] = f"Bearer {self.access_token}"
 
         response = httpx.request(
             method,
@@ -195,9 +188,36 @@ class AmcoClient:
             **kwargs,
         )
         raise_for_error(response)
+        return response
+
+    def request(self, method: str, endpoint: str, **kwargs: Any) -> Any:
+        """Make an authenticated JSON request, logging in first if needed.
+
+        Args:
+            method: HTTP method. Amco+ uses GET, POST, PUT and DELETE depending
+                on the endpoint.
+            endpoint: Path starting with `/`, relative to `base_url`.
+            **kwargs: Passed through to httpx — typically `params=` or `json=`.
+
+        Returns:
+            The decoded JSON body. Usually a `dict`, but a few endpoints
+            return a bare `list` — `/installations/{id}/centers` is one — so
+            this is deliberately untyped. A no-content response (HTTP 202/204,
+            as the integration update and delete return) gives `None`.
+            For a file response, use `request_bytes()` instead.
+        """
+        response = self._request_response(method, endpoint, **kwargs)
         if not response.content:
             return None
         return response.json()
+
+    def request_bytes(self, method: str, endpoint: str, **kwargs: Any) -> bytes:
+        """Make an authenticated request and return its body unchanged.
+
+        Use this for downloads such as patient attachments. Error responses
+        still pass through `raise_for_error()` before any bytes are returned.
+        """
+        return self._request_response(method, endpoint, **kwargs).content
 
     def get(self, endpoint: str, **kwargs: Any) -> Any:
         """Authenticated GET. See `request()`."""
@@ -206,6 +226,10 @@ class AmcoClient:
     def post(self, endpoint: str, **kwargs: Any) -> Any:
         """Authenticated POST. See `request()`."""
         return self.request("POST", endpoint, **kwargs)
+
+    def get_bytes(self, endpoint: str, **kwargs: Any) -> bytes:
+        """Authenticated binary GET. See `request_bytes()`."""
+        return self.request_bytes("GET", endpoint, **kwargs)
 
     @property
     def root(self) -> "Root":
@@ -238,6 +262,31 @@ class AmcoClient:
         params: dict[str, Any] = {"itemsPerPage": -1}
         params.update(filters)
         return self.get("/installations/search", params=params)["items"]
+
+    def send_two_factor_code(self) -> Any:
+        """Request the user's two-factor code — `GET /two-factor/send`.
+
+        Despite being a GET, this has an external side effect: the API sends a
+        code to the user. Never call it as a connectivity check.
+        """
+        return self.get("/two-factor/send")
+
+    def create_step_up_challenge(
+        self, *, purpose: str = "treatment-edit"
+    ) -> dict[str, Any]:
+        """Start a short-lived step-up authentication challenge."""
+        return self.post("/auth/step-up/challenge", json={"purpose": purpose})
+
+    def verify_step_up(self, challenge_id: str, code: str) -> dict[str, Any]:
+        """Verify a step-up code and return its short-lived grant.
+
+        The response contains `grant` and `expiresAt`. Treat both the code and
+        grant as secrets and never log them.
+        """
+        return self.post(
+            "/auth/step-up/verify",
+            json={"challengeId": challenge_id, "code": code},
+        )
 
     def __repr__(self) -> str:
         state = "authenticated" if self.is_token_valid() else "not authenticated"

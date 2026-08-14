@@ -1,6 +1,6 @@
 """Python client for the Amco+ API (Farmadosis).
 
-Amco+ has a strict hierarchy, and this library mirrors it as nested scopes:
+Amco+ has a conceptual hierarchy, and this library mirrors it as nested scopes:
 
     installation (the pharmacy)
     └── center (the care home it serves)
@@ -8,26 +8,32 @@ Amco+ has a strict hierarchy, and this library mirrors it as nested scopes:
             └── treatments
 
 Start from a client and drill down. Each level is built locally — no request is
-made until you call something on a collection:
+made until you call a request method such as `details()`, `list()` or `search()`:
 
     from amcoplus import AmcoClient
 
     client = AmcoClient(login="user@example.com", password="...")
 
-    for installation in client.installations():
-        print(installation["id"], installation["name"])
+    installation_id = ...
+    center_id = ...
+    patient_id = ...
 
-    center = client.installation(65).center(417)
-    for patient in center.patients.list(is_active=True):
+    installations = client.installations()
+    print(f"Visible installations: {len(installations)}")
+
+    center = client.installation(installation_id).center(center_id)
+    page = center.patients.search(all_items=False, page=1, is_active=True)
+    for patient in page["items"]:
         print(patient["id"])
 
 Two naming rules hold everywhere: a **plural attribute is a collection**
 (`center.patients`) and a **singular method is one item**
-(`center.patient(3955)`).
+(`center.patient(patient_id)`).
 
-Collections all expose `list()`, `search()` and `get()` from `Resource`. See
-each resource class for the filters its endpoint accepts, because Amco+
-silently ignores query parameters it does not recognise.
+Search-backed collections expose `list()`, `search()` and `get()` from
+`Resource`. Bare-list collections expose `list()` and `get()` without adding a
+`/search` suffix. See each resource class for the filters its endpoint accepts,
+because Amco+ silently ignores query parameters it does not recognise.
 
 Failures raise a subclass of `AmcoError`; catch that to catch everything.
 
@@ -47,12 +53,14 @@ from .resources import (
     AuthFormField,
     BareListResource,
     Center,
+    DirectResource,
     Installation,
     IntegrationProvider,
     Patient,
     Resource,
     Root,
     SelectChoice,
+    Treatment,
     WritableBareListResource,
 )
 
@@ -65,6 +73,7 @@ __all__ = [
     "AuthenticationError",
     "BareListResource",
     "Center",
+    "DirectResource",
     "Installation",
     "IntegrationProvider",
     "NotFoundError",
@@ -72,6 +81,7 @@ __all__ = [
     "Resource",
     "Root",
     "SelectChoice",
+    "Treatment",
     "ValidationError",
     "WritableBareListResource",
     "raise_for_error",
