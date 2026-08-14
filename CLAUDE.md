@@ -147,6 +147,7 @@ status. Known so far:
 | 9001 | 422 | Invalid credentials |
 | 1001 | 404 | The installation does not exist |
 | 2014 | 404 | A path segment had the wrong type, e.g. `centers/search` read as an id |
+| 53001 | 422 | Field validation failed — Laravel `validation.*` rules on the request body. `details` maps each failing field path (e.g. `attributes.0.key`) to its rule |
 | 53002 | 422 | Request-DTO validation failed — a required query param is missing or the wrong type. Seen when a `/search` endpoint's `items_per_page` (int) is left null |
 | 54002 | 404 | Route does not exist — `Not Found on GET <url>` |
 
@@ -505,6 +506,20 @@ envelope), like centers. The providers themselves are root-level (above).
 | `.../integration-provider-customizations/create` | POST | → 201. body: `{integration_provider_id, auth_credential:{...}, type_frequency:"manual", frequency:"weekly", at_day, at_hour, at_minute}` |
 | `.../integration-provider-customizations/{id}/update` | **PUT** | → 202, **whole body** (same fields as create; a partial one 500s) |
 | `.../integration-provider-customizations/{id}/delete` | **DELETE** | → 204, **soft delete** (sets `is_active=false`; row stays in the list) |
+| `.../integration-provider-customizations/{id}/execute-action` | POST | dynamic-option lookups (see below) |
+
+**Dynamic option fields.** An `auth_form` field's `options` is normally static,
+but a dependent dropdown carries `{"action": "<name>"}` instead — its choices are
+fetched live. Resiplus's `resiplus_center` uses action `request_centers`: the
+server connects with the entered credentials and returns the centres. Fetch them
+via `execute-action`, body `{"action": <name>, "attributes": [{"key","value"}, ...]}`
+where attributes are the credential values the action needs (`Integrations.execute_action`
+takes a plain mapping and shapes it). Needs a real integration `{id}`.
+
+**Static select options are frontend-only.** Some selects (e.g. Resiplus's
+`protocol`: HTTP/HTTPS/FTP/SSH/SMB) have no `options` in the API `auth_form` — the
+web UI hardcodes the list. The library cannot enumerate those; the caller passes
+the value directly.
 
 **This resource breaks the "writes are POST to a sub-path" rule.** Update is a
 PUT and delete is an HTTP DELETE — POSTing either gives 405. Both return no body
