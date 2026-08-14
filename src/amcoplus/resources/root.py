@@ -15,7 +15,19 @@ __all__ = [
     "IntegrationProvider",
     "IntegrationProviders",
     "Root",
+    "SelectChoice",
 ]
+
+
+class SelectChoice(TypedDict):
+    """One choice of a `select` field. `key` is the value to put in
+    `auth_credential`; `value` is the human label (e.g. `key="http"`,
+    `value="HTTP"`). `key` is usually a string but can be an int (`schema_object`
+    uses `1`/`2`).
+    """
+
+    key: Any
+    value: str
 
 
 class AuthFormField(TypedDict):
@@ -23,14 +35,21 @@ class AuthFormField(TypedDict):
 
     `name` is the key to use in the `auth_credential` you hand to
     `Center.integrations.create`; `is_required` says whether the provider will
-    want it filled. `type` is the widget kind (`"text"`, `"file"`, ...) and
-    `options` is its extra config (e.g. `{"accept": ".csv"}` for a file). These
-    are hints for building the call — the library does not enforce them.
+    want it filled. `type` is the widget kind (`"text"`, `"number"`, `"password"`,
+    `"select"`, `"checkbox"`, `"textarea"`, `"file"`, `"message"`).
+
+    For a `select`, `items` holds the choices as `SelectChoice`s — pass a choice's
+    `key`. A dynamic select has `items: []` and instead `options={"action": ...}`;
+    fetch its choices at runtime with `Center.integrations.execute_action`.
+    `options` otherwise carries per-type config: constraints like
+    `{"min", "max"}` / `{"minlength", "maxlength"}`, or `{"accept": ...}` for a
+    file. These are hints for building the call — the library does not enforce them.
     """
 
     label: str
     name: str
     type: str
+    items: list[SelectChoice]
     options: Any
     is_required: bool
 

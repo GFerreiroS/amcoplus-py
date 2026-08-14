@@ -52,6 +52,7 @@ from .resources import (
     Patient,
     Resource,
     Root,
+    SelectChoice,
 )
 
 __all__ = [
@@ -69,6 +70,7 @@ __all__ = [
     "Patient",
     "Resource",
     "Root",
+    "SelectChoice",
     "ValidationError",
     "raise_for_error",
 ]

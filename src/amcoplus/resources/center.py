@@ -8,7 +8,7 @@ from .base import BareListResource, Resource
 
 if TYPE_CHECKING:
     from ..client import AmcoClient
-    from .root import IntegrationProvider
+    from .root import AuthFormField, IntegrationProvider
 
 __all__ = [
     "Center",
@@ -72,6 +72,20 @@ class Integrations(BareListResource):
             and field["name"] != "undefined"
             and field.get("type") not in cls._NON_CREDENTIAL_TYPES
         ]
+
+    @staticmethod
+    def select_choices(field: "AuthFormField") -> dict[Any, str]:
+        """Valid values of a `select` field, as `{value_to_send: label}`.
+
+        Reads the field's `items` (`[{key, value}]`, where `key` is what goes in
+        `auth_credential` and `value` is the display label). For example, a
+        `protocol` field returns `{"http": "HTTP", "https": "HTTPS", ...}`.
+
+        Empty for a **dynamic** select — one whose `options` is `{"action": ...}`,
+        whose choices are fetched live. Get those with `execute_action` instead,
+        passing `field["options"]["action"]`.
+        """
+        return {c["key"]: c.get("value") for c in field.get("items") or []}
 
     @classmethod
     def credential_template(

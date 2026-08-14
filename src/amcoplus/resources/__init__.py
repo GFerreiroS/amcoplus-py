@@ -1,7 +1,7 @@
 from .base import BareListResource, Resource
 from .installation import Installation
 from .center import Center, Patient
-from .root import AuthFormField, IntegrationProvider, Root
+from .root import AuthFormField, IntegrationProvider, Root, SelectChoice
 
 __all__ = [
     "BareListResource",
@@ -12,4 +12,5 @@ __all__ = [
     "Root",
     "IntegrationProvider",
     "AuthFormField",
+    "SelectChoice",
 ]
