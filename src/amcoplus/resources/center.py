@@ -182,7 +182,12 @@ class Integrations(BareListResource):
         Returns:
             The created integration record (with its new `id`), so you can
             confirm what was stored or act on it. The API wraps the row in a
-            `{"data": ...}` envelope on create; this unwraps it.
+            `{"data": ...}` envelope on create; this unwraps it. For a
+            file/webhook provider the record also carries the ingest URLs —
+            `public_url_absolute` (the webhook to POST data to),
+            `private_url_absolute`, `public_soap_url_absolute` and
+            `url_signature`. The integration only takes effect once `check`
+            passes.
         """
         body = self._body(
             integration_provider_id, auth_credential, type_frequency,
@@ -235,6 +240,19 @@ class Integrations(BareListResource):
         return self._client.request(
             "DELETE", f"{self.url}/{integration_id}/delete"
         )
+
+    def check(self, integration_id: int) -> Any:
+        """Test an integration's connection — the "Comprobar conexión" button.
+
+        `POST .../integration-provider-customizations/{integration_id}/check`
+
+        A freshly created integration does not take effect until its connection
+        checks out, so call this after `create`. Returns `{"accepted": bool,
+        "reason": ...}` when the test runs. A provider that cannot connect (wrong
+        credentials, unreachable host) may instead answer HTTP 500, which surfaces
+        as `APIError`.
+        """
+        return self._client.post(f"{self.url}/{integration_id}/check")
 
     def execute_action(
         self,
