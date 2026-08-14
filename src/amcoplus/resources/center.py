@@ -180,13 +180,18 @@ class Integrations(BareListResource):
                 `None` for `"manual"`.
 
         Returns:
-            The created integration record, so you can confirm what was stored.
+            The created integration record (with its new `id`), so you can
+            confirm what was stored or act on it. The API wraps the row in a
+            `{"data": ...}` envelope on create; this unwraps it.
         """
         body = self._body(
             integration_provider_id, auth_credential, type_frequency,
             frequency, at_day, at_hour, at_minute,
         )
-        return self._client.post(f"{self.url}/create", json=body)
+        result = self._client.post(f"{self.url}/create", json=body)
+        if isinstance(result, dict) and "data" in result:
+            return result["data"]
+        return result
 
     def update(
         self,
