@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Center",
+    "CenterMedicine",
     "Doctors",
     "ImportedMedicines",
     "IntakesAssociation",
@@ -384,6 +385,53 @@ class IntakesGrouping(WritableBareListResource):
     path = "intakes-grouping"
 
 
+class CenterMedicine:
+    """A medicine seen and customised from one center.
+
+    The medicine itself is installation-level; these two endpoints are its
+    **per-center** view and overrides. Get one from a center rather than
+    building it directly:
+
+        med = client.installation(65).center(417).medicine(11561)
+
+    Attributes:
+        id: The medicine id (an installation-level medicine id).
+    """
+
+    def __init__(
+        self, client: "AmcoClient", base_path: str, medicine_id: int
+    ) -> None:
+        self._client = client
+        self.id = medicine_id
+        self._base_path = f"{base_path}/medicines/{medicine_id}"
+
+    def customized(self) -> dict[str, Any]:
+        """This medicine as this center sees it.
+
+        `GET /installations/{i}/centers/{c}/medicines/{id}/customized`
+
+        Returns the medicine record with the center's overrides applied
+        (flags like `is_emblistable`, `can_use_fsp`, `force_dispense_in_tray`,
+        `dispense_in_unique_bag`, ...).
+        """
+        return self._client.get(f"{self._base_path}/customized")
+
+    def customize(self, **fields: Any) -> Any:
+        """Apply this center's overrides to the medicine.
+
+        `PUT /installations/{i}/centers/{c}/medicines/{id}/customize`
+
+        A **PUT** (POST → 405), returns 202. Pass the fields to override; the
+        keys are the writable ones from `customized()`.
+        """
+        return self._client.request(
+            "PUT", f"{self._base_path}/customize", json=fields
+        )
+
+    def __repr__(self) -> str:
+        return f"CenterMedicine(id={self.id})"
+
+
 class Module:
     """A single module of a center. Its submodules hang off here.
 
@@ -492,6 +540,13 @@ class Center:
         No request is made; the scope is built locally.
         """
         return Module(self._client, self._base_path, module_id)
+
+    def medicine(self, medicine_id: int) -> "CenterMedicine":
+        """Return a `CenterMedicine` — a medicine's per-center view and overrides.
+
+        No request is made; the scope is built locally.
+        """
+        return CenterMedicine(self._client, self._base_path, medicine_id)
 
     def patient(self, patient_id: int) -> "Patient":
         """Return a `Patient` scoped to this center.
