@@ -506,7 +506,15 @@ envelope), like centers. The providers themselves are root-level (above).
 | `.../integration-provider-customizations/create` | POST | → 201. body: `{integration_provider_id, auth_credential:{...}, type_frequency:"manual", frequency:"weekly", at_day, at_hour, at_minute}` |
 | `.../integration-provider-customizations/{id}/update` | **PUT** | → 202, **whole body** (same fields as create; a partial one 500s) |
 | `.../integration-provider-customizations/{id}/delete` | **DELETE** | → 204, **soft delete** (sets `is_active=false`; row stays in the list) |
+| `.../integration-provider-customizations/{id}/check` | POST | test the connection ("Comprobar conexión"). → 200 `{accepted, reason}`; a provider that can't connect answers 500. GET → 405 |
 | `.../integration-provider-customizations/{id}/execute-action` | POST | dynamic-option lookups (see below) |
+
+The **create response wraps the row in `{"data": ...}`** (unlike the GET, which
+is bare) — `create` unwraps it and returns the record with its new `id`. For a
+file/webhook provider that record carries the ingest URLs `public_url_absolute`
+(the webhook to POST data to), `private_url_absolute`, `public_soap_url_absolute`
+and `url_signature`; a plain GET of the row does not include them. A new
+integration only takes effect once `check` passes.
 
 **Select field choices live in `items`, not `options`.** A `select` field in the
 `auth_form` carries its choices under an **`items`** key: `[{key, value}]`, where
