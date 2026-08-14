@@ -324,6 +324,7 @@ client.installation(i)
      intakes_association, intakes_grouping
      details(), update(), import_patients_and_treatments()
      .module(m)     -> submodules
+     .medicine(m)   -> customized(), customize()
      .patient(p)    -> treatments
 ```
 
@@ -457,8 +458,8 @@ yet — discover with `scripts/explore_api.py`.
 | `/installations/{i}/medicines/{id}/update` | |
 | `/installations/{i}/medicines/{id}/customize` | installation-level customisation |
 | `/installations/{i}/medicines/{id}/community-characteristics` | |
-| `/installations/{i}/centers/{c}/medicines/{id}/customized` | per-center view |
-| `/installations/{i}/centers/{c}/medicines/{id}/customize` | per-center customisation |
+| `/installations/{i}/centers/{c}/medicines/{id}/customized` | GET, per-center view → `center.medicine(id).customized()` |
+| `/installations/{i}/centers/{c}/medicines/{id}/customize` | **PUT** (POST → 405), → 202, per-center overrides → `center.medicine(id).customize(**fields)` |
 | `/installations/{i}/medicine-families/create` | note the singular `medicine-` |
 | `/installations/{i}/medicine-families/{id}/update` | |
 
