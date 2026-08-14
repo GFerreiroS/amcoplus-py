@@ -539,7 +539,13 @@ PUT and delete is an HTTP DELETE — POSTing either gives 405. Both return no bo
 (202/204), which is why `request()` returns `None` on empty content. There is no
 hard delete.
 
-`auth_credential` keys come from the chosen provider's `auth_form` (`name`s).
+`auth_credential` keys are the chosen provider's `auth_form` field `name`s, and it
+holds **every** field's value (the web form dumps them all in): `text`/`textarea`/
+`password` as strings, `number` as a string/number, `checkbox` as a bool, `select`
+as the chosen `key`. `file` fields are not included (they are the data channel).
+Nothing else moves to the top level — the create body envelope
+(`integration_provider_id`, `auth_credential`, `type_frequency`, `frequency`,
+`at_day`, `at_hour`, `at_minute`) is the same for every provider and category.
 The library never validates it: `create`/`update` send whatever they are given.
 
 **One endpoint serves all nine categories** — the category and provider are not
