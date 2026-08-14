@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..client import AmcoClient
 
-__all__ = ["BareListResource", "Resource"]
+__all__ = ["BareListResource", "Resource", "WritableBareListResource"]
 
 JSONDict = dict[str, Any]
 
@@ -54,6 +54,41 @@ class BareListResource:
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(url={self.url!r})"
+
+
+class WritableBareListResource(BareListResource):
+    """A `BareListResource` that also writes rows.
+
+    The API's real write convention — verified on integrations, doctors, modules
+    and submodules — is **`POST {url}/create`**, **`PUT {url}/{id}/update`** and
+    **`DELETE {url}/{id}/delete`**, not the all-POST scheme the older notes
+    assumed. `create` and `update` take a free body; which keys a resource wants
+    is documented on the subclass (and only enforced by the API). Not every
+    resource offers `delete` (doctors and modules do not) — subclasses that do
+    inherit `delete`; the others simply do not expose it.
+    """
+
+    def create(self, **fields: Any) -> Any:
+        """Create a row — `POST {url}/create` with `fields` as the body."""
+        return self._client.post(f"{self.url}/create", json=fields)
+
+    def update(self, resource_id: int, **fields: Any) -> Any:
+        """Update a row — `PUT {url}/{resource_id}/update`.
+
+        A PUT (POST gives 405). Pass the fields to change.
+        """
+        return self._client.request(
+            "PUT", f"{self.url}/{resource_id}/update", json=fields
+        )
+
+    def _delete(self, resource_id: int) -> Any:
+        """Delete a row — `DELETE {url}/{resource_id}/delete`.
+
+        Exposed as `delete` only by subclasses whose endpoint supports it.
+        """
+        return self._client.request(
+            "DELETE", f"{self.url}/{resource_id}/delete"
+        )
 
 
 class Resource:

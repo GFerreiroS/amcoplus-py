@@ -53,6 +53,7 @@ from .resources import (
     Resource,
     Root,
     SelectChoice,
+    WritableBareListResource,
 )
 
 __all__ = [
@@ -72,6 +73,7 @@ __all__ = [
     "Root",
     "SelectChoice",
     "ValidationError",
+    "WritableBareListResource",
     "raise_for_error",
 ]
 
